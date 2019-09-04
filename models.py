@@ -261,7 +261,7 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
                         count += 1
                 if count > 9:
                     break
-        save_path = self._save.save(self._sess, "model/_case_save_net" + time.strftime("%m-%d-%H-%M",time.localtime())
+        save_path = self._save.save(self._sess, "model/save_net" + time.strftime("%m-%d-%H-%M",time.localtime())
                                     + ".ckpt" )
         print("Save to path: ", save_path)
 

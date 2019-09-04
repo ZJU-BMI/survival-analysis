@@ -269,7 +269,7 @@ class BidirectionalLSTMExperiments(object):
             x_train,x_test,y_train,y_test = train_test_split(dynamic_features,labels,test_size=0.4,random_state=1)
             train_dynamic_res, train_y_res = imbalance_preprocess(x_train, y_train, 'BiLSTM')
             train_set = DataSet(train_dynamic_res,train_y_res)
-            test_set = DataSet(x_test,y_test)
+            test_set = DataSet(x_test,y_test.ravel())
             self._model.fit(train_set, test_set)
             y_score = self._model.predict(test_set)
             test_index = np.arange(y_test.shape[0]*y_test.shape[1])
@@ -295,11 +295,29 @@ class AttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
                                          max_pace=max_pace,
                                          ridge=ridge)
 
-
+    def attention_analysis(self):
+        test_labels = np.zeros([0,self._time_steps,1])
+        attention_signals_tol = np.zeros(shape=(0,self._time_steps,self._num_features))
+        pre_tol=np.zeros([0,self._time_steps,1])
+        models = ["save_net09-04-10-54.ckpt", "save_net09-04-10-59.ckpt",
+                  "save_net09-04-11-01.ckpt", "save_net09-04-11-02.ckpt",
+                  "save_net09-04-11-03.ckpt"]
+        for i in range(5):
+            dynamic_features = self._data_set.dynamic_features
+            labels = self._data_set.labels
+            labels = labels.astype('int')
+            x_train, x_test, y_train, y_test = train_test_split(dynamic_features, labels, test_size=0.4, random_state=1)
+            train_dynamic_res, train_y_res = imbalance_preprocess(x_train, y_train, 'BiLSTM')
+            y_test_trans = y_test.ravel()
+            train_set = DataSet(train_dynamic_res, train_y_res)
+            test_set = DataSet(x_test, y_test_trans)
+            prob,attention_weight = self._model.attention_analysis(test_set.dynamic_features, models[i-1])
+            attention_signals_tol = np.concatenate((attention_signals_tol, attention_weight))
+        np.save("allAttentionWeight.npy",attention_signals_tol)
 
 if __name__ == "__main__":
     for i in range(5):
         # LogisticRegressionExperiment().do_experiments()
         # BidirectionalLSTMExperiments().do_experiments()
-        AttentionBiLSTMExperiments().do_experiments()
-
+        # AttentionBiLSTMExperiments().do_experiments()
+        AttentionBiLSTMExperiments().attention_analysis()
