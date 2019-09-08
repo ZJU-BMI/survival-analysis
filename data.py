@@ -63,8 +63,10 @@ class DataSet(object):
 
 def read_data(name):
     if name == "LogisticRegression":
-        dynamic_features = np.load("logistic_features.npy")
-        labels = np.load("logistic_labels.npy").reshape([-1,1])
+        # dynamic_features = np.load("logistic_features.npy")
+        # labels = np.load("logistic_labels.npy").reshape([-1,1])
+        dynamic_features = np.load("allPatientFeatures.npy")[:,0:5,:].reshape([-1,201])
+        labels = np.load("allPatientLabels.npy")[:, :, -1].reshape([-1, 42, 1])[:,0:5,:].reshape([-1,1])
     else:
         dynamic_features = np.load("allPatientFeatures.npy")
         dynamic_features = dynamic_features[:,0:5,:]

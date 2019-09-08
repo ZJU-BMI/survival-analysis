@@ -4,20 +4,21 @@ import matplotlib.pyplot as plt
 import sklearn
 import time
 import xlwt
+from sklearn.cluster import KMeans
 import xlsxwriter
 from imblearn.over_sampling import SMOTE
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score,roc_auc_score,f1_score,precision_score,recall_score,roc_curve
 from data import read_data,DataSet
-from models import BidirectionalLSTMModel,AttentionLSTMModel,LogisticRegression
+from models import BidirectionalLSTMModel,AttentionLSTMModel,LogisticRegression,SelfAttentionLSTMModel
 
 
 class ExperimentSetup(object):
     kfold = 5  # 5折交叉验证
     batch_size = 128
     hidden_size = 512
-    epochs = 20
+    epochs = 10
     output_n_epochs = 1
 
     def __init__(self,learning_rate, max_loss=2.0, max_pace=0.01,ridge=0.0):
@@ -51,6 +52,7 @@ class ExperimentSetup(object):
 lr_steup = ExperimentSetup(0.01,2,0.0001,0.0001)
 bi_lstm_setup = ExperimentSetup(0.05,0.5,0.01,0.001)
 ca_rnn_seup = ExperimentSetup(0.0001,0.08,0.001,0.001)
+self_rnn_setup = ExperimentSetup(0.01,0.08,0.001,0.001)
 
 
 def evaluate(test_index, y_label, y_score, file_name):
@@ -315,9 +317,39 @@ class AttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
             attention_signals_tol = np.concatenate((attention_signals_tol, attention_weight))
         np.save("allAttentionWeight.npy",attention_signals_tol)
 
+    def cluster_by_attention_weight(self):
+        attentionWeight = np.load("allAttentionWeight.npy")
+        attentionWeightArray = attentionWeight.reshape([-1,self._num_features])
+        estimator = KMeans(n_clusters=5)
+        estimator.fit(attentionWeightArray)
+        label_pred = estimator.labels_
+        centroids = estimator.cluster_centers_
+        iertia = estimator.inertia_
+
+
+class SelfAttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
+    def __init__(self):
+        super().__init__()
+
+    def _model_format(self):
+        learning_rate, max_loss, max_pace, ridge = self_rnn_setup.all
+        self._model = SelfAttentionLSTMModel(num_features=self._num_features,
+                                         time_steps=self._time_steps,
+                                         lstm_size=ExperimentSetup.hidden_size,
+                                         n_output=self._n_output,
+                                         batch_size=ExperimentSetup.batch_size,
+                                         epochs=ExperimentSetup.epochs,
+                                         output_n_epoch=ExperimentSetup.output_n_epochs,
+                                         learning_rate=learning_rate,
+                                         max_loss=max_loss,
+                                         max_pace=max_pace,
+                                         ridge=ridge)
+
 if __name__ == "__main__":
     for i in range(5):
-        # LogisticRegressionExperiment().do_experiments()
+        LogisticRegressionExperiment().do_experiments()
         # BidirectionalLSTMExperiments().do_experiments()
         # AttentionBiLSTMExperiments().do_experiments()
-        AttentionBiLSTMExperiments().attention_analysis()
+        # SelfAttentionBiLSTMExperiments().do_experiments()
+        # AttentionBiLSTMExperiments().attention_analysis()
+        # AttentionBiLSTMExperiments().attention_analysis()
