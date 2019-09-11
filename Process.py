@@ -34,8 +34,8 @@ def get_all_patients_features():
             if patientId != patientIdList[i]:
                     i += 1
                     print(len(allPatientFeatures))
-                    allPatientFeatures.append(onePatientFeatures)
-                    onePatientFeaturesArraysTemp = np.array(onePatientFeatures)
+                    allPatientFeatures.append(onePatientFeatures[:-1])
+                    onePatientFeaturesArraysTemp = np.array(onePatientFeatures[:-1])
                     onePatientFeaturesArrays = np.pad(onePatientFeaturesArraysTemp,((0,42-onePatientFeaturesArraysTemp.shape[0]),(0,0)),'constant')
                     temp.append(onePatientFeaturesArrays)
                     allPatientFeaturesArrays = np.array(temp)
@@ -48,7 +48,7 @@ def get_all_patients_features():
         allPatientFeatures.append(onePatientFeatures)   # get all patients features
         temp.append(onePatientFeaturesArrays)
         allPatientFeaturesArrays = np.array(temp)
-        np.save("allPatientFeatures.npy",allPatientFeaturesArrays)
+        np.save("allPatientFeatures1.npy",allPatientFeaturesArrays)
         # allPatientFeaturesArrays = np.dstack((allPatientFeaturesArrays,onePatientFeaturesArrays))
 
         print(len(allPatientFeatures))
@@ -83,8 +83,8 @@ def get_all_patients_labels():
             if patientId != patientIdList[i]:
                 i += 1
                 print(len(allPatientLabels))
-                allPatientLabels.append(onePatientLabels)
-                onePatientLabelsArraysTemp = np.array(onePatientLabels)
+                allPatientLabels.append(onePatientLabels[:-1])
+                onePatientLabelsArraysTemp = np.array(onePatientLabels[:-1])
                 onePatientLabelsArrays = np.pad(onePatientLabelsArraysTemp,
                                                   ((0, 42 - onePatientLabelsArraysTemp.shape[0]), (0, 0)), 'constant')
                 temp.append(onePatientLabelsArrays)
@@ -98,18 +98,18 @@ def get_all_patients_labels():
         allPatientLabels.append(onePatientLabels)  # get all patients features
         temp.append(onePatientLabelsArrays)
         allPatientLabelsArrays = np.array(temp)
-        np.save("allPatientLabels.npy", allPatientLabelsArrays)
+        np.save("allPatientLabels1.npy", allPatientLabelsArrays)
         # allPatientFeaturesArrays = np.dstack((allPatientFeaturesArrays,onePatientFeaturesArrays))
 
         print(len(allPatientLabels))
         print(allPatientLabels)
 
 def read_features():
-    features = np.load("allPatientFeatures.npy")
+    features = np.load("allPatientFeatures1.npy")
     print(features.shape)
 
 def read_labels():
-    labels = np.load("allPatientLabels.npy")
+    labels = np.load("allPatientLabels1.npy")
     print(labels)
 
 def get_logistic_features():
@@ -132,6 +132,6 @@ if __name__ == '__main__':
     # get_all_patients_features()
     # get_all_patients_labels()
     # read_features()
-    # read_labels()
-    get_logistic_features()
+    read_labels()
+    # get_logistic_features()
     # get_logistic_labels()

@@ -1,5 +1,5 @@
 import os
-from collections import Counter
+import jenkspy
 import matplotlib.pyplot as plt
 import sklearn
 import time
@@ -18,7 +18,7 @@ class ExperimentSetup(object):
     kfold = 5  # 5折交叉验证
     batch_size = 128
     hidden_size = 512
-    epochs = 10
+    epochs = 20
     output_n_epochs = 1
 
     def __init__(self,learning_rate, max_loss=2.0, max_pace=0.01,ridge=0.0):
@@ -50,7 +50,7 @@ class ExperimentSetup(object):
 
 # set the parameters
 lr_steup = ExperimentSetup(0.01,2,0.0001,0.0001)
-bi_lstm_setup = ExperimentSetup(0.05,0.5,0.01,0.001)
+bi_lstm_setup = ExperimentSetup(0.03,0.5,0.01,0.001)
 ca_rnn_seup = ExperimentSetup(0.0001,0.08,0.001,0.001)
 self_rnn_setup = ExperimentSetup(0.01,0.08,0.001,0.001)
 
@@ -201,9 +201,9 @@ class LogisticRegressionExperiment(object):
                                          ridge = ridge)
 
     def _check_path(self):
-        if not os.path.exists("average_result_test"):
-            os.makedirs("average_result_test")
-        self._filename = "average_result_test" + "/" + self._model.name + " " + time.strftime( "%Y-%m-%d-%H-%M-%S", time.localtime())
+        if not os.path.exists("result_9_10_0（"):
+            os.makedirs("result_9_10_0")
+        self._filename = "result_9_10_0" + "/" + self._model.name + " " + time.strftime( "%Y-%m-%d-%H-%M-%S", time.localtime())
 
     def do_experiments(self):
         dynamic_features = self._data_set.dynamic_features
@@ -259,9 +259,9 @@ class BidirectionalLSTMExperiments(object):
                                              ridge=ridge)
 
     def _check_path(self):
-        if not os.path.exists("average_result_test"):
-            os.makedirs("average_result_test")
-        self._filename = "average_result_test" + "/" + self._model.name + " " + time.strftime( "%Y-%m-%d-%H-%M-%S", time.localtime())
+        if not os.path.exists("result_9_10_0"):
+            os.makedirs("result_9_10_0")
+        self._filename = "result_9_10_0" + "/" + self._model.name + " " + time.strftime( "%Y-%m-%d-%H-%M-%S", time.localtime())
 
     def do_experiments(self):
         for i in range(5):
@@ -277,6 +277,58 @@ class BidirectionalLSTMExperiments(object):
             test_index = np.arange(y_test.shape[0]*y_test.shape[1])
             evaluate(test_index, y_test, y_score, self._filename)
         self._model.close()
+        # n_output = 1
+        # dynamic_features = self._data_set.dynamic_features
+        # time_steps = dynamic_features.shape[1]
+        # num_feautres = dynamic_features.shape[2]
+        # labels = self._data_set.labels
+        # dynamic_features_transform = dynamic_features.reshape([-1,num_feautres])
+        # labels_transform = labels.reshape([-1,n_output])
+        # kf = sklearn.model_selection.StratifiedKFold(n_splits=ExperimentSetup.kfold, shuffle=False)
+        # tol_test_index = np.zeros(shape=0, dtype=np.int32)
+        # tol_pred = np.zeros(shape=(0, time_steps, n_output))
+        # tol_labels = np.zeros(shape=(0, time_steps, n_output))
+        # i = 1
+        # for train_index, test_index in kf.split(X=dynamic_features_transform,y=labels_transform):
+        #
+        #     train_dynamic = dynamic_features_transform[train_index]
+        #     train_y = labels_transform[train_index]
+        #
+        #
+        #     test_dynamic = dynamic_features_transform[test_index]
+        #     test_y = labels_transform[test_index]
+        #
+        #     if train_dynamic.shape[0] == 8399:
+        #         train_dynamic  = np.append(train_dynamic,test_dynamic[-1,:].reshape(-1,200),axis=0)
+        #         train_y = np.append(train_y, test_y[-1,:].reshape(-1,1),axis=0)
+        #
+        #         test_dynamic = test_dynamic[:-1,:]
+        #         test_y = test_y[:-1,:]
+        #
+        #     train_dynamic = train_dynamic.reshape(-1,time_steps,num_feautres)
+        #     train_y = train_y.reshape(-1,time_steps,n_output)
+        #
+        #     test_dynamic = test_dynamic.reshape(-1, time_steps, num_feautres)
+        #     test_y = test_y.reshape(-1, time_steps,n_output)
+        #     train_dynamic_res, train_y_res = imbalance_preprocess(train_dynamic, train_y, self._model.name)
+        #
+        #     train_set = DataSet(train_dynamic_res, train_y_res)
+        #     test_set = DataSet(test_dynamic, test_y)
+        #
+        #     self._model.fit(train_set,test_set)
+        #     y_score = self._model.predict(test_set)
+        #
+        #     tol_test_index = np.concatenate((tol_test_index,test_index))
+        #     tol_pred = np.vstack((tol_pred, y_score))
+        #     tol_labels = np.vstack(( tol_labels, test_y))
+        #     print("Cross validation: {} of {}".format(i, ExperimentSetup.kfold),
+        #           time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+        #     i += 1
+        # evaluate(tol_test_index, tol_labels, tol_pred, self._filename)
+        # self._model.close()
+
+
+
 
 
 class AttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
@@ -301,30 +353,82 @@ class AttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
         test_labels = np.zeros([0,self._time_steps,1])
         attention_signals_tol = np.zeros(shape=(0,self._time_steps,self._num_features))
         pre_tol=np.zeros([0,self._time_steps,1])
-        models = ["save_net09-04-10-54.ckpt", "save_net09-04-10-59.ckpt",
-                  "save_net09-04-11-01.ckpt", "save_net09-04-11-02.ckpt",
-                  "save_net09-04-11-03.ckpt"]
+        models = ["save_net09-09-18-59.ckpt", "save_net09-09-19-00.ckpt",
+                  "save_net09-09-19-01.ckpt", "save_net09-09-19-02.ckpt",
+                  "save_net09-09-19-03.ckpt"]
         for i in range(5):
             dynamic_features = self._data_set.dynamic_features
             labels = self._data_set.labels
             labels = labels.astype('int')
-            x_train, x_test, y_train, y_test = train_test_split(dynamic_features, labels, test_size=0.4, random_state=1)
-            train_dynamic_res, train_y_res = imbalance_preprocess(x_train, y_train, 'BiLSTM')
+            x_train, x_test, y_train, y_test = train_test_split(dynamic_features, labels, test_size=0.2, random_state=1)
+            train_dynamic_res, train_y_res = imbalance_preprocess(x_train, y_train, 'global_attention_bi_lstm')
             y_test_trans = y_test.ravel()
             train_set = DataSet(train_dynamic_res, train_y_res)
             test_set = DataSet(x_test, y_test_trans)
-            prob,attention_weight = self._model.attention_analysis(test_set.dynamic_features, models[i-1])
+            prob,attention_weight = self._model.attention_analysis(test_set.dynamic_features, models[i])
             attention_signals_tol = np.concatenate((attention_signals_tol, attention_weight))
         np.save("allAttentionWeight.npy",attention_signals_tol)
 
     def cluster_by_attention_weight(self):
         attentionWeight = np.load("allAttentionWeight.npy")
         attentionWeightArray = attentionWeight.reshape([-1,self._num_features])
-        estimator = KMeans(n_clusters=5)
-        estimator.fit(attentionWeightArray)
-        label_pred = estimator.labels_
-        centroids = estimator.cluster_centers_
-        iertia = estimator.inertia_
+        all_feature_breaks = []
+        for nums in range(self._num_features):
+            one_feature_breaks = jenkspy.jenks_breaks(attentionWeightArray[:,nums],nb_class=5)
+            print(one_feature_breaks)
+            all_feature_breaks.append(one_feature_breaks)
+        np.save("all_features_breaks.npy",all_feature_breaks)
+
+    def get_stages(self):
+        all_features_breaks = np.load("all_features_breaks.npy")
+        attention_weight = np.load("allAttentionWeight.npy")
+        one_patient_stage = []
+        one_patient_score = []
+        all_patient_stage = np.zeros(shape=(0,5),dtype=np.int32)
+        all_patient_score = np.zeros(shape=(0,5),dtype=np.float32)
+        for patient in range(attention_weight.shape[0]):
+            for visit in range(attention_weight.shape[1]):
+                one_patient_features = attention_weight[patient,visit,:]
+                patient_features_in_stage1 = []
+                patient_features_in_stage2 = []
+                patient_features_in_stage3 = []
+                patient_features_in_stage4 = []
+                patient_features_in_stage5 = []
+                for i in range(one_patient_features.shape[0]):
+                    if one_patient_features[i] < all_features_breaks[i,1]:
+                        patient_features_in_stage1.append(one_patient_features[i])
+
+                    if all_features_breaks[i,1] <= one_patient_features[i] < all_features_breaks[i,2]:
+                        patient_features_in_stage2.append(one_patient_features[i])
+
+                    if all_features_breaks[i,2] <= one_patient_features[i] < all_features_breaks[i,3]:
+                        patient_features_in_stage3.append(one_patient_features[i])
+
+                    if all_features_breaks[i,3] <= one_patient_features[i] < all_features_breaks[i,4]:
+                        patient_features_in_stage4.append(one_patient_features[i])
+
+                    if all_features_breaks[i,4] <= one_patient_features[i] <= all_features_breaks[i,5]:
+                        patient_features_in_stage5.append(one_patient_features[i])
+
+                stage1_score = np.sum(patient_features_in_stage1)
+                stage2_score = np.sum(patient_features_in_stage2)
+                stage3_score = np.sum(patient_features_in_stage3)
+                stage4_score = np.sum(patient_features_in_stage4)
+                stage5_score = np.sum(patient_features_in_stage5)
+                score = [stage1_score,stage2_score,stage3_score,stage4_score,stage5_score]
+                max_score = max(score)
+                max_score_index = np.argmax(score)
+                one_patient_score.append(max_score)
+                one_patient_stage.append(max_score_index)
+            all_patient_stage = np.concatenate((all_patient_stage, np.array(one_patient_stage).reshape(-1,5)))
+            all_patient_score = np.concatenate((all_patient_score, np.array(one_patient_score).reshape(-1,5)))
+            one_patient_stage = []
+            one_patient_score = []
+        np.save('all_patient_stage.npy',all_patient_stage)
+        np.save('all_patient_score.npy',all_patient_score)
+
+
+
 
 
 class SelfAttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
@@ -347,9 +451,8 @@ class SelfAttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
 
 if __name__ == "__main__":
     for i in range(5):
-        LogisticRegressionExperiment().do_experiments()
+        # LogisticRegressionExperiment().do_experiments()
         # BidirectionalLSTMExperiments().do_experiments()
         # AttentionBiLSTMExperiments().do_experiments()
         # SelfAttentionBiLSTMExperiments().do_experiments()
-        # AttentionBiLSTMExperiments().attention_analysis()
-        # AttentionBiLSTMExperiments().attention_analysis()
+        AttentionBiLSTMExperiments().get_stages()

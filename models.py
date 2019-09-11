@@ -179,7 +179,7 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
             self._w = tf.Variable(tf.truncated_normal([num_features, num_features],stddev=0.1),name='attention_weight')
             self._global_attention_mechanism()
             self._hidden_layer()
-            self._w_trans = tf.Variable(tf.truncated_normal([2*self._lstm_size, self._n_output], stddev=0.1),name='output_weight')
+            self._w_trans = tf.Variable(tf.truncated_normal([2*self._lstm_size, self._n_output], stddev=1.0),name='output_weight')
             self._v = tf.tile(tf.reshape(self._w_trans, [-1, 2*self._lstm_size, self._n_output]), [tf.shape(self._x)[0], 1, 1])
             bias = tf.Variable(tf.random_normal([n_output]))
             self._output = tf.matmul(self._hidden, self._v) + bias
@@ -262,7 +262,7 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
                 if count > 9:
                     break
         save_path = self._save.save(self._sess, self._name + "model/save_net" + time.strftime("%m-%d-%H-%M",time.localtime())
-                                    + ".ckpt" )
+                                     + ".ckpt" )
         print("Save to path: ", save_path)
 
     def attention_analysis(self, test_dynamic, model):
