@@ -65,13 +65,13 @@ def read_data(name):
     if name == "LogisticRegression":
         # dynamic_features = np.load("logistic_features.npy")
         # labels = np.load("logistic_labels.npy").reshape([-1,1])
-        dynamic_features = np.load("allPatientFeatures1.npy")[0:2100,0:5,:].reshape([-1,200])
-        labels = np.load("allPatientLabels1.npy")[0:2100, :, -1].reshape([-1, 42, 1])[:,0:5,:].reshape([-1,1])
+        dynamic_features = np.load("allPatientFeatures1.npy")[:,0:5,:].reshape([-1,200])
+        labels = np.load("allPatientLabels1.npy")[:, :, -1].reshape([-1, 42, 1])[:,0:5,:].reshape([-1,1])
     else:
         dynamic_features = np.load("allPatientFeatures1.npy")
         dynamic_features = dynamic_features[0:2100,0:5,:]
         labels = np.load("allPatientLabels1.npy")[0:2100,:,-1].reshape([-1,42,1])
-        labels = labels[0:2100,0:5,:]
+        labels = labels[:,0:5,:]
     return DataSet(dynamic_features,labels)
 if __name__ == '__main__':
     read_data('rnn')
