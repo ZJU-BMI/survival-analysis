@@ -31,7 +31,7 @@ class BasicLSTMModel(object):
             self._sess = tf.Session()
             self._hidden_layer()
             # TODO: （m,time_steps,hidden_size）->(m,time_steps,1) 怎么实现
-            self._w_trans = tf.Variable(tf.truncated_normal([2*self._lstm_size,self._n_output],stddev=0.1),name='output_weight')
+            self._w_trans = tf.Variable(tf.truncated_normal([2*self._lstm_size,self._n_output],stddev=1.0),name='output_weight')
             self._v = tf.tile(tf.reshape(self._w_trans,[-1,2*self._lstm_size,self._n_output]),[tf.shape(self._x)[0],1,1])
             bias = tf.Variable(tf.random_normal([n_output]),name='output_bias')
             self._output = tf.matmul(self._hidden, self._v) + bias

@@ -4,10 +4,11 @@ import matplotlib.pyplot as plt
 import sklearn
 import time
 import xlwt
-from sklearn.cluster import KMeans
-import xlsxwriter
+from lifelines import CoxPHFitter
 from imblearn.over_sampling import SMOTE
 import numpy as np
+import pandas as pd
+from lifelines.utils import k_fold_cross_validation
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score,roc_auc_score,f1_score,precision_score,recall_score,roc_curve
 from data import read_data,DataSet
@@ -16,8 +17,8 @@ from models import BidirectionalLSTMModel,AttentionLSTMModel,LogisticRegression,
 
 class ExperimentSetup(object):
     kfold = 5  # 5折交叉验证
-    batch_size = 128
-    hidden_size = 512
+    batch_size = 16
+    hidden_size = 128
     epochs = 20
     output_n_epochs = 1
 
@@ -80,6 +81,34 @@ def split_data_set(dynamic_features, labels):
 
     train_dynamic_features[4] = dynamic_features[0:4*num, :, :]
     train_labels[4] = labels[0:4*num, :, :]
+
+    return train_dynamic_features, test_dynamic_features, train_labels, test_labels
+
+
+def split_logistic_data(dynamic_features, labels):
+    train_dynamic_features = {}
+    train_labels = {}
+    test_dynamic_features = {}
+    test_labels = {}
+    num = int(dynamic_features.shape[0] / 5)
+    for i in range(5):
+        test_dynamic_features[i] = dynamic_features[num*i:num*(i+1),:]
+        test_labels[i] = labels[num*i:num*(i+1),:]
+
+    train_dynamic_features[0] = dynamic_features[num:5*num,:]
+    train_labels[0] = labels[num:5*num,:]
+
+    train_dynamic_features[1] = np.vstack((dynamic_features[2*num:5*num,:],dynamic_features[0:num,:]))
+    train_labels[1] = np.vstack((labels[2*num:5*num,:],labels[0:num,:]))
+
+    train_dynamic_features[2] = np.vstack((dynamic_features[3*num:5*num,:],dynamic_features[0:2*num,:]))
+    train_labels[2] = np.vstack((labels[3*num:5*num,:],labels[0:2*num,:]))
+
+    train_dynamic_features[3] = np.vstack((dynamic_features[4*num:5*num,:],dynamic_features[0:3*num,:]))
+    train_labels[3] = np.vstack((labels[4*num:5*num,:],labels[0:3*num,:]))
+
+    train_dynamic_features[4] = dynamic_features[0:4*num,:]
+    train_labels[4] = labels[0:4*num]
 
     return train_dynamic_features, test_dynamic_features, train_labels, test_labels
 
@@ -195,6 +224,7 @@ def imbalance_preprocess(train_dynamic, train_y, name):
         method = SMOTE(kind="regular",random_state=40)
         print(name)
         train_dynamic_res, train_y_res = method.fit_sample(train_dynamic, train_y)
+        train_y_res = train_y_res.reshape(-1,1)
     else:
         method = SMOTE(kind="regular")
         print(name)
@@ -230,38 +260,59 @@ class LogisticRegressionExperiment(object):
                                          ridge = ridge)
 
     def _check_path(self):
-        if not os.path.exists("result_9_10_0（"):
-            os.makedirs("result_9_10_0")
-        self._filename = "result_9_10_0" + "/" + self._model.name + " " + time.strftime( "%Y-%m-%d-%H-%M-%S", time.localtime())
+        if not os.path.exists("result_9_16_0"):
+            os.makedirs("result_9_16_0")
+        self._filename = "result_9_16_0" + "/" + self._model.name + " " + time.strftime( "%Y-%m-%d-%H-%M-%S", time.localtime())
 
     def do_experiments(self):
+        n_output = 1
         dynamic_features = self._data_set.dynamic_features
         labels = self._data_set.labels
-        labels = labels.astype('int')
-        kf = sklearn.model_selection.StratifiedKFold(n_splits=ExperimentSetup.kfold, shuffle=False)
-        n_output = 1
         tol_test_index = np.zeros(shape=0, dtype=np.int32)
-        tol_pred = np.zeros(shape=(0,n_output))
-        tol_label = np.zeros(shape=(0,n_output),dtype=np.int32)
-        i = 1
-        for train_index, test_index in kf.split(X= dynamic_features, y=labels):
-            train_dynamic = dynamic_features[train_index]
-            train_y= labels[train_index]
-            train_dynamic_res, train_y_res = imbalance_preprocess(train_dynamic, train_y, 'LogisticRegression')
-            test_dynamic = dynamic_features[test_index]
-            test_y = labels[test_index]
-            train_set = DataSet(train_dynamic_res, train_y_res.reshape([-1,1]))
-            test_set = DataSet(test_dynamic, test_y)
-            self._model.fit(train_set,test_set)
+        tol_pred = np.zeros(shape=(0, n_output))
+        tol_label = np.zeros(shape=(0, n_output), dtype=np.int32)
+        train_dynamic_features, test_dynamic_features, train_labels, test_labels = split_logistic_data(dynamic_features,labels)
+        for i in range(5):
+            train_dynamic_res, train_labels_res = imbalance_preprocess(train_dynamic_features[i], train_labels[i],
+                                                                       'LogisticRegression')
+            train_set = DataSet(train_dynamic_res, train_labels_res)
+            test_set = DataSet(test_dynamic_features[i].reshape(-1,200), test_labels[i].reshape(-1,1))
+            self._model.fit(train_set, test_set)
             y_score = self._model.predict(test_set)
-            tol_test_index = np.concatenate((tol_test_index, test_index))
             tol_pred = np.vstack((tol_pred, y_score))
-            tol_label = np.vstack((tol_label, test_y))
-            print("Cross validation: {} of {}".format(i, ExperimentSetup.kfold),
+            tol_label = np.vstack((tol_label, test_labels[i]))
+            print("Cross validation: {} of {}".format(i, 5),
                   time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
-            i += 1
+        tol_test_index = np.arange(labels.shape[0] * labels.shape[1])
         evaluate(tol_test_index, tol_label, tol_pred, self._filename)
         self._model.close()
+        # dynamic_features = self._data_set.dynamic_features
+        # labels = self._data_set.labels
+        # labels = labels.astype('int')
+        # kf = sklearn.model_selection.StratifiedKFold(n_splits=ExperimentSetup.kfold, shuffle=False)
+        # n_output = 1
+        # tol_test_index = np.zeros(shape=0, dtype=np.int32)
+        # tol_pred = np.zeros(shape=(0,n_output))
+        # tol_label = np.zeros(shape=(0,n_output),dtype=np.int32)
+        # i = 1
+        # for train_index, test_index in kf.split(X= dynamic_features, y=labels):
+        #     train_dynamic = dynamic_features[train_index]
+        #     train_y= labels[train_index]
+        #     train_dynamic_res, train_y_res = imbalance_preprocess(train_dynamic, train_y, 'LogisticRegression')
+        #     test_dynamic = dynamic_features[test_index]
+        #     test_y = labels[test_index]
+        #     train_set = DataSet(train_dynamic_res, train_y_res.reshape([-1,1]))
+        #     test_set = DataSet(test_dynamic, test_y)
+        #     self._model.fit(train_set,test_set)
+        #     y_score = self._model.predict(test_set)
+        #     tol_test_index = np.concatenate((tol_test_index, test_index))
+        #     tol_pred = np.vstack((tol_pred, y_score))
+        #     tol_label = np.vstack((tol_label, test_y))
+        #     print("Cross validation: {} of {}".format(i, ExperimentSetup.kfold),
+        #           time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+        #     i += 1
+        # evaluate(tol_test_index, tol_label, tol_pred, self._filename)
+        # self._model.close()
 
 
 class BidirectionalLSTMExperiments(object):
@@ -288,9 +339,9 @@ class BidirectionalLSTMExperiments(object):
                                              ridge=ridge)
 
     def _check_path(self):
-        if not os.path.exists("result_9_10_0"):
-            os.makedirs("result_9_10_0")
-        self._filename = "result_9_10_0" + "/" + self._model.name + " " + time.strftime( "%Y-%m-%d-%H-%M-%S", time.localtime())
+        if not os.path.exists("result_9_16_0"):
+            os.makedirs("result_9_16_0")
+        self._filename = "result_9_16_0" + "/" + self._model.name + " " + time.strftime( "%Y-%m-%d-%H-%M-%S", time.localtime())
 
     def do_experiments(self):
         n_output=1
@@ -361,6 +412,7 @@ class AttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
             all_feature_breaks.append(one_feature_breaks)
         np.save("all_features_breaks.npy",all_feature_breaks)
 
+
     def get_stages(self):
         all_features_breaks = np.load("all_features_breaks.npy")
         attention_weight = np.load("allAttentionWeight.npy")
@@ -428,10 +480,34 @@ class SelfAttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
                                          max_pace=max_pace,
                                          ridge=ridge)
 
+
+def cox_regression_experiment():
+    dynamic_fetaures = np.load('allPatientFeatures_now.npy')[0:2100,0:5,:].reshape([-1,98])
+    dynamic_fetaures.astype(np.int32)
+    labels = np.load('allPatientLabels.npy')[0:2100, :, -1].reshape([-1, 42, 1])[:,0:5,:].reshape([-1,1])
+    data = np.hstack((dynamic_fetaures,labels))
+    data_set = pd.DataFrame(data)
+    col_list = list(data_set.columns.values)
+    new_col = [str(x) for x in col_list]
+    data_set.columns = new_col
+    print(list(data_set.columns.values))
+    cph = CoxPHFitter()
+    cph.fit(data_set,duration_col='10',event_col='98',show_progress=True)
+    cph.print_summary()
+    # cph.plot(columns=['15','20','21','25'])
+    # plt.savefig('cox model' + '.png', format='png')
+
+    scores = k_fold_cross_validation(cph, data_set, '10', event_col='98', k=5)
+    print(scores)
+    print(np.mean(scores))
+    print(np.std(scores))
+
+
 if __name__ == "__main__":
-    for i in range(5):
-        # LogisticRegressionExperiment().do_experiments()
+    for i in range(3):
+        cox_regression_experiment()
+    #     LogisticRegressionExperiment().do_experiments()
         # BidirectionalLSTMExperiments().do_experiments()
         # AttentionBiLSTMExperiments().do_experiments()
         # SelfAttentionBiLSTMExperiments().do_experiments()
-        AttentionBiLSTMExperiments().get_stages()
+        # AttentionBiLSTMExperiments().get_stages()
