@@ -155,7 +155,7 @@ def evaluate(test_index, y_label, y_score, file_name):
     tp_count = 1
     tn_count = 1
     fn_count = 1
-    all_samples = np.load("logistic_features.npy")
+    all_samples = np.load("logistic_features.npy",allow_pickle=True)
     for j in range(len(y_label)):
         if y_label[j] ==0 and y_pred_label[j] ==1:  # FP
             write_result(j,test_index,y_label,y_score,y_pred_label,table,table_title,all_samples,fp_samples,"fp",fp_count)
@@ -386,9 +386,9 @@ class AttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
 
     def attention_analysis(self):
         attention_signals_tol = np.zeros(shape=(0,self._time_steps,self._num_features))
-        models = ["save_net09-09-18-59.ckpt", "save_net09-09-19-00.ckpt",
-                  "save_net09-09-19-01.ckpt", "save_net09-09-19-02.ckpt",
-                  "save_net09-09-19-03.ckpt"]
+        models = ["save_net10-06-15-45-21.ckpt", "save_net10-06-15-45-48.ckpt",
+                  "save_net10-06-15-46-15.ckpt", "save_net10-06-15-46-42.ckpt",
+                  "save_net10-06-15-47-10.ckpt"]
         n_output = 1
         dynamic_features = self._data_set.dynamic_features
         labels = self._data_set.labels
@@ -398,24 +398,24 @@ class AttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
             test_set = DataSet(test_dynamic_features[i], test_labels[i])
             prob, attention_weight = self._model.attention_analysis(test_set.dynamic_features, models[i])
             attention_signals_tol = np.concatenate((attention_signals_tol, attention_weight))
-        np.save("allAttentionWeight.npy",attention_signals_tol)
+        np.save("allAttentionWeight_5.npy",attention_signals_tol)
 
 
 
     def cluster_by_attention_weight(self):
-        attentionWeight = np.load("allAttentionWeight.npy")
+        attentionWeight = np.load("average_weight.npy")
         attentionWeightArray = attentionWeight.reshape([-1,self._num_features])
         all_feature_breaks = []
         for nums in range(self._num_features):
             one_feature_breaks = jenkspy.jenks_breaks(attentionWeightArray[:,nums],nb_class=5)
             print(one_feature_breaks)
             all_feature_breaks.append(one_feature_breaks)
-        np.save("all_features_breaks.npy",all_feature_breaks)
+        np.save("all_features_breaks_ave.npy",all_feature_breaks)
 
 
     def get_stages(self):
-        all_features_breaks = np.load("all_features_breaks.npy")
-        attention_weight = np.load("allAttentionWeight.npy")
+        all_features_breaks = np.load("all_features_breaks_ave.npy")
+        attention_weight = np.load("average_weight.npy")
         one_patient_stage = []
         one_patient_score = []
         all_patient_stage = np.zeros(shape=(0,5),dtype=np.int32)
@@ -458,8 +458,8 @@ class AttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
             all_patient_score = np.concatenate((all_patient_score, np.array(one_patient_score).reshape(-1,5)))
             one_patient_stage = []
             one_patient_score = []
-        np.save('all_patient_stage.npy',all_patient_stage)
-        np.save('all_patient_score.npy',all_patient_score)
+        np.save('all_patient_stage_ave.npy',all_patient_stage)
+        np.save('all_patient_score_ave.npy',all_patient_score)
 
 
 class SelfAttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
@@ -481,6 +481,7 @@ class SelfAttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
                                          ridge=ridge)
 
 
+# cox regression model
 def cox_regression_experiment():
     dynamic_fetaures = np.load('allPatientFeatures_now.npy')[0:2100,0:5,:].reshape([-1,98])
     dynamic_fetaures.astype(np.int32)
@@ -490,6 +491,7 @@ def cox_regression_experiment():
     col_list = list(data_set.columns.values)
     new_col = [str(x) for x in col_list]
     data_set.columns = new_col
+    np.savetxt('allPatient_now.csv', data_set, delimiter=',')
     print(list(data_set.columns.values))
     cph = CoxPHFitter()
     cph.fit(data_set,duration_col='10',event_col='98',show_progress=True)
@@ -502,12 +504,22 @@ def cox_regression_experiment():
     print(np.mean(scores))
     print(np.std(scores))
 
+def get_average_weight():
+    weight1 = np.load("allAttentionWeight_1.npy")
+    weight2 = np.load("allAttentionWeight_2.npy")
+    weight3 = np.load("allAttentionWeight_3.npy")
+    weight4 = np.load("allAttentionWeight_4.npy")
+    weight5 = np.load("allAttentionWeight_5.npy")
+    ave_weight = np.add(weight1,np.add(weight2,np.add(weight3,np.add(weight4,weight5))))/5.0
+    print(ave_weight)
+    np.save("average_weight.npy", ave_weight)
+    return ave_weight
 
 if __name__ == "__main__":
-    for i in range(3):
-        cox_regression_experiment()
-    #     LogisticRegressionExperiment().do_experiments()
+    # for i in range(5):
+        # cox_regression_experiment()
+        # LogisticRegressionExperiment().do_experiments()
         # BidirectionalLSTMExperiments().do_experiments()
-        # AttentionBiLSTMExperiments().do_experiments()
+    AttentionBiLSTMExperiments().get_stages()
         # SelfAttentionBiLSTMExperiments().do_experiments()
         # AttentionBiLSTMExperiments().get_stages()

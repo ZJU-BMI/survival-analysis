@@ -159,7 +159,7 @@ def get_logistic_labels():
 
 # 找到不同stage对应的病人信息，并根据这些病人信息的feature weight 寻找排名前十的特征
 def get_patient_in_stage():
-    stages = np.load("all_patient_stage.npy")
+    stages = np.load("all_patient_stage_ave.npy")
     all_patient_weights = np.load("allPatientFeatures1.npy")[0:2100,0:5,:]
     patient_in_stage0 = np.zeros(shape=(0,200),dtype=np.int32)
     patient_in_stage1 = np.zeros(shape=(0,200),dtype=np.int32)
@@ -202,10 +202,10 @@ def get_patient_in_stage():
     print(stage_0_max_index)
 
 if __name__ == '__main__':
-    get_all_patients_features()
+    # get_all_patients_features()
     # get_all_patients_labels()
     # read_features()
     # read_labels()
-    # get_patient_in_stage()
+    get_patient_in_stage()
     # get_logistic_features()
     # get_logistic_labels()

@@ -73,5 +73,8 @@ def read_data(name):
         labels = np.load("allPatientLabels1.npy")[0:2100,:,-1].reshape([-1,42,1])
         labels = labels[:,0:5,:]
     return DataSet(dynamic_features,labels)
+
+
+
 if __name__ == '__main__':
     read_data('rnn')

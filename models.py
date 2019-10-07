@@ -3,7 +3,7 @@ import numpy as np
 from sklearn.metrics import roc_auc_score
 import time
 import matplotlib.pyplot as plt
-
+from lifelines import CoxPHFitter
 
 # 单向LSTM
 class BasicLSTMModel(object):
@@ -183,10 +183,12 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
             self._v = tf.tile(tf.reshape(self._w_trans, [-1, 2*self._lstm_size, self._n_output]), [tf.shape(self._x)[0], 1, 1])
             bias = tf.Variable(tf.random_normal([n_output]))
             self._output = tf.matmul(self._hidden, self._v) + bias
-            self._pred = tf.nn.sigmoid(self._output)
+            mask,_ = self._length()
+            mask = tf.reshape(mask,[-1,self._time_steps,1])
+            self._prediction = tf.nn.sigmoid(self._output)
+            self._pred = tf.multiply(self._prediction, mask)
             self._loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self._y, logits=self._pred),
                                         name="loss")
-
             if ridge != 0:
                 for trainable_variables in tf.trainable_variables(self._name):
                     self._loss += tf.contrib.layers.l2_regularizer(ridge)(trainable_variables)
@@ -196,7 +198,7 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
 
     def _global_attention_mechanism(self):
         """
-            global attention : return self._z
+            global attention : return self._z 
         """
         # attention_weight tensor
         w_x = tf.tile(tf.reshape(self._w,[-1,self._num_features, self._num_features]),[tf.shape(self._x)[0],1, 1])
@@ -261,14 +263,14 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
                         count += 1
                 if count > 9:
                     break
-        save_path = self._save.save(self._sess, self._name + "model/save_net" + time.strftime("%m-%d-%H-%M",time.localtime())
+        save_path = self._save.save(self._sess, self._name + "model/save_net" + time.strftime("%m-%d-%H-%M-%S",time.localtime())
                                      + ".ckpt" )
         print("Save to path: ", save_path)
 
     def attention_analysis(self, test_dynamic, model):
         #  TODO: 输入test_set, 读取模型并返回attention的weight
         saver = tf.train.Saver()
-        saver.restore(self._sess, "model/" + model)
+        saver.restore(self._sess, self._name + "model/"+ model)
         prob = self._sess.run(self._pred, feed_dict={self._x: test_dynamic})
         attention_signals = self._sess.run(self._w_z, feed_dict={self._x: test_dynamic})
         return prob,attention_signals.reshape([-1, self._time_steps,self._num_features])
