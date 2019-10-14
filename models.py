@@ -1,14 +1,17 @@
 import tensorflow as tf
 import numpy as np
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score,accuracy_score
 import time
 import matplotlib.pyplot as plt
 from lifelines import CoxPHFitter
+from sklearn.base import BaseEstimator
+import inspect
+
 
 # 单向LSTM
-class BasicLSTMModel(object):
+class BasicLSTMModel(BaseEstimator):
     def __init__(self, time_steps, num_features, n_output, lstm_size, batch_size=64, epochs=1000,output_n_epoch=10,
-                 learning_rate=0.01, max_loss=0.5, max_pace=0.01, ridge=0.0,
+                 learning_rate=0.01, max_loss=0.5, max_pace=0.01, ridge=0.0,dropout=0.8,
                  optimizer=tf.train.AdamOptimizer, name='BasicLSTMMode'):
         self._time_steps = time_steps
         self._num_features = num_features
@@ -21,6 +24,7 @@ class BasicLSTMModel(object):
         self._max_loss = max_loss
         self._max_pace = max_pace
         self._ridge = ridge
+        self._dropout=dropout
         self._optimizer = optimizer
         self._name = name
         print("lstm_size=", lstm_size, "learning_rate=", learning_rate, "max_loss=", max_loss, "name=", name)
@@ -30,7 +34,7 @@ class BasicLSTMModel(object):
             self._y = tf.placeholder(tf.float32,[None, time_steps, n_output], name="label")  # 注意区别： 输出是三维tensor
             self._sess = tf.Session()
             self._hidden_layer()
-            # TODO: （m,time_steps,hidden_size）->(m,time_steps,1) 怎么实现
+            # （m,time_steps,hidden_size）->(m,time_steps,1) 怎么实现
             self._w_trans = tf.Variable(tf.truncated_normal([2*self._lstm_size,self._n_output],stddev=1.0),name='output_weight')
             self._v = tf.tile(tf.reshape(self._w_trans,[-1,2*self._lstm_size,self._n_output]),[tf.shape(self._x)[0],1,1])
             bias = tf.Variable(tf.random_normal([n_output]),name='output_bias')
@@ -61,9 +65,10 @@ class BasicLSTMModel(object):
 
     def _hidden_layer(self):
         lstm = tf.contrib.rnn.BasicLSTMCell(self._lstm_size)
+        lstm_dropout = tf.contrib.rnn.DropoutWrapper(lstm,output_keep_prob=self._dropout)
         init_state = lstm.zero_state(tf.shape(self._x)[0], tf.float32)
         mask, length = self._length()
-        self._hidden, _ = tf.nn.dynamic_rnn(lstm,
+        self._hidden, _ = tf.nn.dynamic_rnn(lstm_dropout,
                                             self._x,
                                             sequence_length=length,
                                             initial_state=init_state)
@@ -81,7 +86,7 @@ class BasicLSTMModel(object):
         for c in tf.trainable_variables(self._name):
             print(c.name)
 
-        print("auc\tepoch\tloss\tloss_diff\tcount")
+        print("acc\tauc\tepoch\tloss\tloss_diff\tcount")
         logged = set()
         loss= 0
         count= 0
@@ -100,7 +105,14 @@ class BasicLSTMModel(object):
                 test_lables = test_set.labels
                 test_lables = test_lables.reshape([-1,1])
                 auc = roc_auc_score(test_lables, y_score)
-                print("{}\t{}\t{}\t{}\t{}".format(auc, data_set.epoch_completed, loss, loss_diff, count),
+                y_score_pred = [0 for j in range(len(y_score))]
+                for i in range(len(y_score)):
+                    if y_score[i] >= 0.5:
+                        y_score_pred[i] = 1
+                    else:
+                        y_score_pred[i] = 0
+                acc = accuracy_score(test_lables, y_score_pred)
+                print("{}\t{}\t{}\t{}\t{}\t{}".format(acc,auc, data_set.epoch_completed, loss, loss_diff, count),
                       time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
 
                 # 设置训练停止条件
@@ -115,6 +127,9 @@ class BasicLSTMModel(object):
                     break
 
     def predict(self,test_set):
+        loss = self._sess.run(self._loss, feed_dict={self._x: test_set.dynamic_features,
+                                                     self._y: test_set.labels})
+        print("test_loss-----"+str(loss))
         return self._sess.run(self._pred, feed_dict={self._x: test_set.dynamic_features})
 
     @property
@@ -129,21 +144,24 @@ class BasicLSTMModel(object):
 # 双向LSTM
 class BidirectionalLSTMModel(BasicLSTMModel):
     def __init__(self, time_steps, num_features, n_output, lstm_size, batch_size=64, epochs=1000, output_n_epoch=10,
-                 learning_rate=0.01, max_loss=0.5, max_pace=0.01,ridge=0.0,
+                 learning_rate=0.01, max_loss=0.5, max_pace=0.01,ridge=0.0,dropout=0.8,
                  optimizer=tf.train.AdamOptimizer, name="Bi-LSTM"):
         super().__init__(time_steps, num_features,n_output, lstm_size, batch_size, epochs, output_n_epoch,
-                       learning_rate, max_loss, max_pace, ridge, optimizer, name)
+                       learning_rate, max_loss, max_pace, ridge, dropout,optimizer, name)
 
     def _hidden_layer(self):
         self._lstm = {}
+        self._lstm_dropout = {}
         self._init_state = {}
         for direction in ["forward", "backward"]:
             self._lstm[direction] = tf.contrib.rnn.BasicLSTMCell(self._lstm_size)
             self._init_state[direction] = self._lstm[direction].zero_state(tf.shape(self._x)[0],tf.float32)
-
+        for direction in ["forward","backward"]:
+            self._lstm_dropout[direction] = tf.contrib.rnn.DropoutWrapper(self._lstm[direction],
+                                                                          output_keep_prob=self._dropout)
         mask, length = self._length()
-        self._hidden, _ = tf.nn.bidirectional_dynamic_rnn(self._lstm["forward"],
-                                                           self._lstm["backward"],
+        self._hidden, _ = tf.nn.bidirectional_dynamic_rnn(self._lstm_dropout["forward"],
+                                                           self._lstm_dropout["backward"],
                                                            self._x,
                                                            sequence_length = length,
                                                            initial_state_fw = self._init_state["forward"],
@@ -154,9 +172,11 @@ class BidirectionalLSTMModel(BasicLSTMModel):
 
 # 添加global attention机制的LSTM
 class AttentionLSTMModel(BidirectionalLSTMModel):
-    def __init__(self,time_steps, num_features, lstm_size,n_output, batch_size=64, epochs=1000, output_n_epoch=10,
-                 learning_rate=0.01, max_loss=0.5, max_pace=0.01, ridge=0.0,
+    def __init__(self,time_steps=5, num_features=94, lstm_size=128,n_output=1, batch_size=64, epochs=1000, output_n_epoch=10,
+                 learning_rate=0.01, max_loss=0.5, max_pace=0.01, ridge=0.0,dropout=0.8,
                  optimizer = tf.train.AdamOptimizer, name="AttentionLSTM"):
+        # super().__init__(time_steps, num_features, lstm_size,n_output, batch_size, epochs, output_n_epoch,
+        #                  learning_rate, max_loss, max_pace, ridge, dropout, optimizer, name)
         self._time_steps = time_steps
         self._num_features = num_features
         self._lstm_size = lstm_size
@@ -168,6 +188,7 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
         self._max_loss = max_loss
         self._max_pace = max_pace
         self._ridge = ridge
+        self._dropout = dropout
         self._optimizer = optimizer
         self._name = name
         print( "learning_rate=", learning_rate, "max_loss=", max_loss, "max_pace=", max_pace,"name=", name)
@@ -185,7 +206,8 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
             self._output = tf.matmul(self._hidden, self._v) + bias
             mask,_ = self._length()
             mask = tf.reshape(mask,[-1,self._time_steps,1])
-            self._prediction = tf.nn.sigmoid(self._output)
+            # 将激活函修改成tanh
+            self._prediction = tf.nn.tanh(self._output)
             self._pred = tf.multiply(self._prediction, mask)
             self._loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self._y, logits=self._pred),
                                         name="loss")
@@ -215,9 +237,12 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
         for direction in ['forward','backward']:
             self._lstm[direction] = tf.contrib.rnn.BasicLSTMCell(self._lstm_size)
             self._init_state[direction] = self._lstm[direction].zero_state(tf.shape(self._x)[0], tf.float32)
+        for direction in ["forward", "backward"]:
+            self._lstm[direction] = tf.contrib.rnn.DropoutWrapper(self._lstm[direction],
+                                                                          output_keep_prob=self._dropout)
         mask, length = self._length()
-        self._hidden, _ = tf.nn.bidirectional_dynamic_rnn(self._lstm['forward'],
-                                                          self._lstm['backward'],
+        self._hidden, _ = tf.nn.bidirectional_dynamic_rnn(self._lstm["forward"],
+                                                           self._lstm["backward"],
                                                           self._z,
                                                           sequence_length = length,
                                                           initial_state_fw = self._init_state['forward'],
@@ -231,7 +256,7 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
         for c in tf.trainable_variables(self._name):
             print(c.name)
 
-        print("auc\tepoch\tloss\tloss_diff\tcount")
+        print("acc\tauc\tepoch\tloss\tloss_diff\tcount")
         logged = set()
         loss= 0
         count= 0
@@ -250,7 +275,14 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
                 test_lables = test_set.labels
                 test_lables = test_lables.reshape([-1,1])
                 auc = roc_auc_score(test_lables, y_score)
-                print("{}\t{}\t{}\t{}\t{}".format(auc, data_set.epoch_completed, loss, loss_diff, count),
+                y_score_pred = [0 for j in range(len(y_score))]
+                for i in range(len(y_score)):
+                    if y_score[i]>= 0.5:
+                        y_score_pred[i]=1
+                    else:
+                        y_score_pred[i]=0
+                acc = accuracy_score(test_lables,y_score_pred)
+                print("{}\t{}\t{}\t{}\t{}\t{}".format(acc,auc, data_set.epoch_completed, loss, loss_diff, count),
                       time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
 
                 # 设置训练停止条件
@@ -268,7 +300,7 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
         print("Save to path: ", save_path)
 
     def attention_analysis(self, test_dynamic, model):
-        #  TODO: 输入test_set, 读取模型并返回attention的weight
+        #   输入test_set, 读取模型并返回attention的weight
         saver = tf.train.Saver()
         saver.restore(self._sess, self._name + "model/"+ model)
         prob = self._sess.run(self._pred, feed_dict={self._x: test_dynamic})
@@ -278,7 +310,7 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
 
 class LogisticRegression(object):
     def __init__(self, time_steps, num_features, n_output, batch_size=64, epochs=1000, output_n_epoch=10,
-                  learning_rate=0.01, max_loss=0.5, max_pace=0.01,ridge=0.0,
+                  learning_rate=0.01, max_loss=0.5, max_pace=0.01,ridge=0.0,dropout=0.8,
                   optimizer=tf.train.AdamOptimizer, name="LogisticRegression"):
         self._time_steps = time_steps
         self._num_features = num_features
@@ -290,6 +322,7 @@ class LogisticRegression(object):
         self._max_loss = max_loss
         self._max_pace = max_pace
         self._ridge = ridge
+        self._dropout = dropout
         self._optimizer = optimizer
         self._name = name
         print("learning_rate=", learning_rate, "max_loss=", max_loss, "max_loss=",max_loss,"max_pace=",max_pace,"name=", name)
@@ -313,7 +346,7 @@ class LogisticRegression(object):
         for c in tf.trainable_variables(self._name):
             print(c.name)
 
-        print("auc\tepoch\tloss\tloss_diff\tcount")
+        print("acc\tauc\tepoch\tloss\tloss_diff\tcount")
         logged = set()
         loss = 0
         count = 0
@@ -329,7 +362,14 @@ class LogisticRegression(object):
                 loss_diff = loss_prev - loss
                 y_score = self.predict(test_set)  # 此处计算和打印auc仅供调参时观察auc变化用，可删除，与最终输出并无关系
                 auc = roc_auc_score(test_set.labels, y_score)
-                print("{}\t{}\t{}\t{}\t{}".format(auc, data_set.epoch_completed, loss, loss_diff, count),
+                y_score_pred = [0 for j in range(len(y_score))]
+                for i in range(len(y_score)):
+                    if y_score[i] >= 0.5:
+                        y_score_pred[i] = 1
+                    else:
+                        y_score_pred[i] = 0
+                acc = accuracy_score(test_set.labels, y_score_pred)
+                print("{}\t{}\t{}\t{}\t{}\t{}".format(acc,auc, data_set.epoch_completed, loss, loss_diff, count),
                       time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
 
                 # 训练停止条件
@@ -358,7 +398,8 @@ class LogisticRegression(object):
 
 class SelfAttentionLSTMModel(BidirectionalLSTMModel):
     def __init__(self, time_steps, num_features, lstm_size, n_output, batch_size=64, epochs=1000, output_n_epoch=10,
-                 learning_rate=0.01, max_loss=0.5, max_pace=0.01, ridge=0.0, optimizer=tf.train.AdamOptimizer,
+                 learning_rate=0.01, max_loss=0.5, max_pace=0.01, ridge=0.0, dropout=0.8,
+                 optimizer=tf.train.AdamOptimizer,
                  name="LocalAttentionLSTM"):
         self._time_steps = time_steps
         self._num_features = num_features
@@ -371,6 +412,7 @@ class SelfAttentionLSTMModel(BidirectionalLSTMModel):
         self._max_loss = max_loss
         self._max_pace = max_pace
         self._ridge = ridge
+        self._dropout = dropout
         self._optimizer = optimizer
         self._name = name
         print( "learning_rate=", learning_rate, "max_loss=", max_loss, "max_pace=", max_pace,"name=", name)
@@ -419,9 +461,13 @@ class SelfAttentionLSTMModel(BidirectionalLSTMModel):
     def _hidden_layer(self):
         self._lstm = {}
         self._init_state = {}
+        self._llstm_dropout = {}
         for direction in ['forward','backward']:
             self._lstm[direction] = tf.contrib.rnn.BasicLSTMCell(self._lstm_size)
             self._init_state[direction] = self._lstm[direction].zero_state(tf.shape(self._x)[0], tf.float32)
+        for direction in ["forward", "backward"]:
+            self._lstm[direction] = tf.contrib.rnn.DropoutWrapper(self._lstm[direction],
+                                                                  input_keep_prob=self._dropout,output_keep_prob=self._dropout)
         mask, length = self._length()
         self._hidden, _ = tf.nn.bidirectional_dynamic_rnn(self._lstm['forward'],
                                                           self._lstm['backward'],
@@ -438,7 +484,7 @@ class SelfAttentionLSTMModel(BidirectionalLSTMModel):
         for c in tf.trainable_variables(self._name):
             print(c.name)
 
-        print("auc\tepoch\tloss\tloss_diff\tcount")
+        print("acc\tauc\tepoch\tloss\tloss_diff\tcount")
         logged = set()
         loss= 0
         count= 0
@@ -457,7 +503,14 @@ class SelfAttentionLSTMModel(BidirectionalLSTMModel):
                 test_lables = test_set.labels
                 test_lables = test_lables.reshape([-1,1])
                 auc = roc_auc_score(test_lables, y_score)
-                print("{}\t{}\t{}\t{}\t{}".format(auc, data_set.epoch_completed, loss, loss_diff, count),
+                y_score_pred = [0 for j in range(len(y_score))]
+                for i in range(len(y_score)):
+                    if y_score[i] >= 0.5:
+                        y_score_pred[i] = 1
+                    else:
+                        y_score_pred[i] = 0
+                acc = accuracy_score(test_lables, y_score_pred)
+                print("{}\t{}\t{}\t{}\t{}\t{}".format(acc,auc, data_set.epoch_completed, loss, loss_diff, count),
                       time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
 
                 # 设置训练停止条件

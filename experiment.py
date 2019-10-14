@@ -9,24 +9,31 @@ from imblearn.over_sampling import SMOTE
 import numpy as np
 import pandas as pd
 from lifelines.utils import k_fold_cross_validation
-from sklearn.model_selection import train_test_split
+from sklearn.cluster import KMeans
+from sklearn.model_selection import RandomizedSearchCV
 from sklearn.metrics import accuracy_score,roc_auc_score,f1_score,precision_score,recall_score,roc_curve
-from data import read_data,DataSet
-from models import BidirectionalLSTMModel,AttentionLSTMModel,LogisticRegression,SelfAttentionLSTMModel
+from data import get_pick_data,DataSet
+from models import BasicLSTMModel,BidirectionalLSTMModel,AttentionLSTMModel,LogisticRegression,SelfAttentionLSTMModel
+import tensorflow as tf
+
 
 
 class ExperimentSetup(object):
     kfold = 5  # 5折交叉验证
-    batch_size = 16
-    hidden_size = 128
-    epochs = 20
+    # batch_size = 16
+    # hidden_size = 128
     output_n_epochs = 1
 
-    def __init__(self,learning_rate, max_loss=2.0, max_pace=0.01,ridge=0.0):
+    def __init__(self,learning_rate, max_loss=2.0, max_pace=0.01,ridge=0.0,batch_size=16,hidden_size=128,epoch=30,
+                 dropout=1.0):
         self._learning_rate = learning_rate
         self._max_loss = max_loss
         self._max_pace = max_pace
         self._ridge = ridge
+        self._batch_size = batch_size
+        self._hidden_size = hidden_size
+        self._epoch = epoch
+        self._dropout = dropout
 
     @property
     def learning_rate(self):
@@ -45,14 +52,31 @@ class ExperimentSetup(object):
         return self._ridge
 
     @property
+    def batch_size(self):
+        return self._batch_size
+
+    @property
+    def hidden_size(self):
+        return self._hidden_size
+
+    @property
+    def epoch(self):
+        return self._epoch
+
+    @property
+    def dropout(self):
+        return self._dropout
+
+    @property
     def all(self):
-        return self._learning_rate, self._max_loss, self._max_pace, self._ridge
+        return self._learning_rate, self._max_loss, self._max_pace, self._ridge,self._batch_size,\
+               self._hidden_size,self._epoch,self._dropout
 
 
 # set the parameters
 lr_steup = ExperimentSetup(0.01,2,0.0001,0.0001)
 bi_lstm_setup = ExperimentSetup(0.03,0.5,0.01,0.001)
-ca_rnn_seup = ExperimentSetup(0.0001,0.08,0.001,0.001)
+global_rnn_seup = ExperimentSetup(0.0001,0.08,0.001,0.001)
 self_rnn_setup = ExperimentSetup(0.01,0.08,0.001,0.001)
 
 
@@ -155,7 +179,7 @@ def evaluate(test_index, y_label, y_score, file_name):
     tp_count = 1
     tn_count = 1
     fn_count = 1
-    all_samples = np.load("logistic_features.npy",allow_pickle=True)
+    all_samples = get_pick_data("LogisticRegression").dynamic_features
     for j in range(len(y_label)):
         if y_label[j] ==0 and y_pred_label[j] ==1:  # FP
             write_result(j,test_index,y_label,y_score,y_pred_label,table,table_title,all_samples,fp_samples,"fp",fp_count)
@@ -239,7 +263,7 @@ def imbalance_preprocess(train_dynamic, train_y, name):
 
 class LogisticRegressionExperiment(object):
     def __init__(self):
-        self._data_set = read_data("LogisticRegression")
+        self._data_set = get_pick_data("LogisticRegression")
         self._num_features = self._data_set.dynamic_features.shape[1]
         self._time_steps = 1
         self._n_output = 1
@@ -247,15 +271,16 @@ class LogisticRegressionExperiment(object):
         self._check_path()
 
     def _model_format(self):
-        learning_rate, max_loss, max_pace, ridge = lr_steup.all
+        learning_rate, max_loss, max_pace, ridge,batch_size,hidden_size,epoch,dropout = lr_steup.all
         self._model = LogisticRegression(num_features=self._num_features,
                                          time_steps = self._time_steps,
                                          n_output = self._n_output,
-                                         batch_size = ExperimentSetup.batch_size,
-                                         epochs = ExperimentSetup.epochs,
+                                         batch_size=batch_size,
+                                         epochs=epoch,
                                          output_n_epoch = ExperimentSetup.output_n_epochs,
                                          learning_rate = learning_rate,
                                          max_loss = max_loss,
+                                         dropout=dropout,
                                          max_pace = max_pace,
                                          ridge = ridge)
 
@@ -271,12 +296,13 @@ class LogisticRegressionExperiment(object):
         tol_test_index = np.zeros(shape=0, dtype=np.int32)
         tol_pred = np.zeros(shape=(0, n_output))
         tol_label = np.zeros(shape=(0, n_output), dtype=np.int32)
-        train_dynamic_features, test_dynamic_features, train_labels, test_labels = split_logistic_data(dynamic_features,labels)
+        train_dynamic_features, test_dynamic_features, train_labels, test_labels = \
+            split_logistic_data(dynamic_features,labels)
         for i in range(5):
             train_dynamic_res, train_labels_res = imbalance_preprocess(train_dynamic_features[i], train_labels[i],
                                                                        'LogisticRegression')
             train_set = DataSet(train_dynamic_res, train_labels_res)
-            test_set = DataSet(test_dynamic_features[i].reshape(-1,200), test_labels[i].reshape(-1,1))
+            test_set = DataSet(test_dynamic_features[i].reshape(-1,94), test_labels[i].reshape(-1,1))
             self._model.fit(train_set, test_set)
             y_score = self._model.predict(test_set)
             tol_pred = np.vstack((tol_pred, y_score))
@@ -317,7 +343,7 @@ class LogisticRegressionExperiment(object):
 
 class BidirectionalLSTMExperiments(object):
     def __init__(self):
-        self._data_set = read_data("BidirectionalLSTM")
+        self._data_set = get_pick_data("BidirectionalLSTM")
         self._num_features = self._data_set.dynamic_features.shape[2]
         self._time_steps = self._data_set.dynamic_features.shape[1]
         self._n_output = 1
@@ -325,16 +351,17 @@ class BidirectionalLSTMExperiments(object):
         self._check_path()
 
     def _model_format(self):
-        learning_rate, max_loss, max_pace, ridge =bi_lstm_setup.all
+        learning_rate, max_loss, max_pace, ridge,batch_size,hidden_size,epochs,dropout =bi_lstm_setup.all
         self._model = BidirectionalLSTMModel(time_steps=self._time_steps,
                                              num_features=self._num_features,
-                                             lstm_size=ExperimentSetup.hidden_size,
+                                             lstm_size=hidden_size,
                                              n_output=self._n_output,
-                                             batch_size=ExperimentSetup.batch_size,
-                                             epochs=ExperimentSetup.epochs,
+                                             batch_size=batch_size,
+                                             epochs=epochs,
                                              output_n_epoch=ExperimentSetup.output_n_epochs,
                                              learning_rate=learning_rate,
                                              max_loss=max_loss,
+                                             dropout=dropout,
                                              max_pace=max_pace,
                                              ridge=ridge)
 
@@ -354,6 +381,7 @@ class BidirectionalLSTMExperiments(object):
         for i in range(5):
             train_dynamic_res, train_labels_res = imbalance_preprocess(train_dynamic_features[i],train_labels[i],'lstm')
             train_set = DataSet(train_dynamic_res, train_labels_res)
+            # train_set = DataSet(train_dynamic_features[i],train_labels[i])
             test_set = DataSet(test_dynamic_features[i],test_labels[i])
             self._model.fit(train_set, test_set)
             y_score = self._model.predict(test_set)
@@ -371,24 +399,26 @@ class AttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
         super().__init__()
 
     def _model_format(self):
-        learning_rate, max_loss, max_pace, ridge = ca_rnn_seup.all
+        learning_rate, max_loss, max_pace, ridge,batch_size,hidden_size,epochs,dropout = global_rnn_seup.all
         self._model = AttentionLSTMModel(num_features=self._num_features,
                                          time_steps=self._time_steps,
-                                         lstm_size=ExperimentSetup.hidden_size,
+                                         lstm_size=hidden_size,
                                          n_output=self._n_output,
-                                         batch_size=ExperimentSetup.batch_size,
-                                         epochs=ExperimentSetup.epochs,
+                                         batch_size=batch_size,
+                                         epochs=epochs,
                                          output_n_epoch=ExperimentSetup.output_n_epochs,
                                          learning_rate=learning_rate,
                                          max_loss=max_loss,
                                          max_pace=max_pace,
+                                         dropout=dropout,
                                          ridge=ridge)
 
+# 得到prediction中的attention weight
     def attention_analysis(self):
         attention_signals_tol = np.zeros(shape=(0,self._time_steps,self._num_features))
-        models = ["save_net10-06-15-45-21.ckpt", "save_net10-06-15-45-48.ckpt",
-                  "save_net10-06-15-46-15.ckpt", "save_net10-06-15-46-42.ckpt",
-                  "save_net10-06-15-47-10.ckpt"]
+        models = ["save_net10-11-11-40-43.ckpt", "save_net10-11-11-41-11.ckpt",
+                  "save_net10-11-11-41-39.ckpt", "save_net10-11-11-42-06.ckpt",
+                  "save_net10-11-11-42-33.ckpt"]
         n_output = 1
         dynamic_features = self._data_set.dynamic_features
         labels = self._data_set.labels
@@ -400,19 +430,18 @@ class AttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
             attention_signals_tol = np.concatenate((attention_signals_tol, attention_weight))
         np.save("allAttentionWeight_5.npy",attention_signals_tol)
 
-
-
+# 得到每一个特征的类别
     def cluster_by_attention_weight(self):
         attentionWeight = np.load("average_weight.npy")
         attentionWeightArray = attentionWeight.reshape([-1,self._num_features])
         all_feature_breaks = []
         for nums in range(self._num_features):
-            one_feature_breaks = jenkspy.jenks_breaks(attentionWeightArray[:,nums],nb_class=5)
+            one_feature_breaks = jenkspy.jenks_breaks(attentionWeightArray[:,nums],nb_class=4)
             print(one_feature_breaks)
             all_feature_breaks.append(one_feature_breaks)
         np.save("all_features_breaks_ave.npy",all_feature_breaks)
 
-
+# 得到每次住院记录的stage
     def get_stages(self):
         all_features_breaks = np.load("all_features_breaks_ave.npy")
         attention_weight = np.load("average_weight.npy")
@@ -438,18 +467,19 @@ class AttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
                     if all_features_breaks[i,2] <= one_patient_features[i] < all_features_breaks[i,3]:
                         patient_features_in_stage3.append(one_patient_features[i])
 
-                    if all_features_breaks[i,3] <= one_patient_features[i] < all_features_breaks[i,4]:
+                    if all_features_breaks[i,3] <= one_patient_features[i] <= all_features_breaks[i,4]:
                         patient_features_in_stage4.append(one_patient_features[i])
 
-                    if all_features_breaks[i,4] <= one_patient_features[i] <= all_features_breaks[i,5]:
-                        patient_features_in_stage5.append(one_patient_features[i])
+                    # if all_features_breaks[i,4] <= one_patient_features[i] <= all_features_breaks[i,5]:
+                    #     patient_features_in_stage5.append(one_patient_features[i])
 
                 stage1_score = np.sum(patient_features_in_stage1)
                 stage2_score = np.sum(patient_features_in_stage2)
                 stage3_score = np.sum(patient_features_in_stage3)
                 stage4_score = np.sum(patient_features_in_stage4)
                 stage5_score = np.sum(patient_features_in_stage5)
-                score = [stage1_score,stage2_score,stage3_score,stage4_score,stage5_score]
+                # score = [stage1_score,stage2_score,stage3_score,stage4_score,stage5_score]
+                score = [stage1_score, stage2_score, stage3_score, stage4_score]
                 max_score = max(score)
                 max_score_index = np.argmax(score)
                 one_patient_score.append(max_score)
@@ -461,48 +491,127 @@ class AttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
         np.save('all_patient_stage_ave.npy',all_patient_stage)
         np.save('all_patient_score_ave.npy',all_patient_score)
 
+# 采用k-means cluster 得到每个feature的label
+    def kmeans_weight_stages(self):
+        all_patient_stage = np.zeros(shape=(10500, 0), dtype=np.int32)
+        km = KMeans(n_clusters=5)
+        attention_weight = np.load("average_weight.npy")
+        attention_weight = attention_weight.reshape(-1,self._num_features)
+        for nums in range(self._num_features):
+            data =  attention_weight[:,nums].reshape(-1,1)
+            km.fit(data)
+            labels = km.labels_.reshape(-1,1)
+            all_patient_stage = np.concatenate((all_patient_stage,labels),axis=1)
+        print(all_patient_stage)
+        all_patient_stage = all_patient_stage.reshape(-1,5,195)
+        np.save("kmeans_stages_5.npy",all_patient_stage)
+        return all_patient_stage
+
+
+# k-means 结果
+    def get_kmeans_stages(self):
+        attention_weight = np.load("average_weight.npy")
+        attention_stage = np.load("kmeans_stages_4.npy")
+        allPatientStage = np.zeros(shape=(0,5),dtype=np.int32)
+        patient_in_stage0 = np.zeros(shape=(0, 195), dtype=np.int32)
+        patient_in_stage1 = np.zeros(shape=(0, 195), dtype=np.int32)
+        patient_in_stage2 = np.zeros(shape=(0, 195), dtype=np.int32)
+        patient_in_stage3 = np.zeros(shape=(0, 195), dtype=np.int32)
+        patient_in_stage4 = np.zeros(shape=(0, 195), dtype=np.int32)
+        for patient in range(attention_weight.shape[0]):
+            one_patient_stage = []
+            for visit in range(attention_weight.shape[1]):
+                onePatientWeight = attention_weight[patient,visit,:].reshape(-1,195)
+                onePatientWeightStage = attention_stage[patient,visit,:].reshape(-1,195)
+                weight_in_stage0 = np.sum(onePatientWeight[np.where(onePatientWeightStage == 0)])
+                weight_in_stage1 = np.sum(onePatientWeight[np.where(onePatientWeightStage == 1)])
+                weight_in_stage2 = np.sum(onePatientWeight[np.where(onePatientWeightStage == 2)])
+                weight_in_stage3 = np.sum(onePatientWeight[np.where(onePatientWeightStage == 3)])
+                weight_in_stage4 = np.sum(onePatientWeight[np.where(onePatientWeightStage == 4)])
+                oneVisitScore = np.max([weight_in_stage0,weight_in_stage1,weight_in_stage2,weight_in_stage3,weight_in_stage4])
+                oneVisitStage = np.argmax([weight_in_stage0,weight_in_stage1,weight_in_stage2,weight_in_stage3,weight_in_stage4])
+                one_patient_stage.append(oneVisitStage)
+                if oneVisitStage==0:
+                    patient_in_stage0= np.concatenate((patient_in_stage0,onePatientWeight))
+                if oneVisitStage==1:
+                    patient_in_stage1 = np.concatenate((patient_in_stage1, onePatientWeight))
+                if oneVisitStage==2:
+                    patient_in_stage2 = np.concatenate((patient_in_stage2, onePatientWeight))
+                if oneVisitStage == 3:
+                    patient_in_stage3 = np.concatenate((patient_in_stage3, onePatientWeight))
+                if oneVisitStage == 4:
+                    patient_in_stage4 = np.concatenate((patient_in_stage4, onePatientWeight))
+            allPatientStage = np.concatenate((allPatientStage,np.array(one_patient_stage).reshape(-1,5)))
+        print(patient_in_stage0.shape[0])
+        print(patient_in_stage1.shape[0])
+        print(patient_in_stage2.shape[0])
+        print(patient_in_stage3.shape[0])
+        print(patient_in_stage4.shape[0])
+
+        stage_0_mean = np.mean(patient_in_stage0, axis=0).reshape(-1)
+        stage_1_mean = np.mean(patient_in_stage1, axis=0).reshape(-1)
+        stage_2_mean = np.mean(patient_in_stage2, axis=0)
+        stage_3_mean = np.mean(patient_in_stage3, axis=0)
+        stage_4_mean = np.mean(patient_in_stage4, axis=0)
+        dataframe = pd.DataFrame({"stage0": stage_0_mean, "stage1": stage_1_mean, "stage2": stage_2_mean,
+                                  "stage3": stage_3_mean,"stage4": stage_4_mean})
+        dataframe.to_csv("stage_weights_1.csv", index=False, sep=",")
+
+        stage_0_max_index = np.argsort(stage_0_mean)
+        stage_1_max_index = np.argsort(stage_1_mean)
+        stage_2_max_index = np.argsort(stage_2_mean)
+        stage_3_max_index = np.argsort(stage_3_mean)
+        stage_4_max_index = np.argsort(stage_4_mean)
+        dataframe2 = pd.DataFrame({"stage0":stage_0_max_index,"stage1":stage_1_max_index,"stage2":stage_2_max_index,
+                                   "stage3":stage_3_max_index,"stage4":stage_4_max_index})
+        dataframe2.to_csv("前十的weight.csv",index=False,sep=",")
+
+        print(stage_0_max_index)
+
 
 class SelfAttentionBiLSTMExperiments(BidirectionalLSTMExperiments):
     def __init__(self):
         super().__init__()
 
     def _model_format(self):
-        learning_rate, max_loss, max_pace, ridge = self_rnn_setup.all
+        learning_rate, max_loss, max_pace, ridge,batch_size,hidden_size,epochs,dropout = self_rnn_setup.all
         self._model = SelfAttentionLSTMModel(num_features=self._num_features,
                                          time_steps=self._time_steps,
-                                         lstm_size=ExperimentSetup.hidden_size,
+                                         lstm_size=hidden_size,
                                          n_output=self._n_output,
-                                         batch_size=ExperimentSetup.batch_size,
-                                         epochs=ExperimentSetup.epochs,
+                                         batch_size=batch_size,
+                                         epochs=epochs,
                                          output_n_epoch=ExperimentSetup.output_n_epochs,
                                          learning_rate=learning_rate,
                                          max_loss=max_loss,
                                          max_pace=max_pace,
+                                        dropout=dropout,
                                          ridge=ridge)
 
 
-# cox regression model
+#  (数据需要重新整理成不相关的独立变量 所以应该使用没有二值化的数据)cox regression model(已将完成)
 def cox_regression_experiment():
-    dynamic_fetaures = np.load('allPatientFeatures_now.npy')[0:2100,0:5,:].reshape([-1,98])
+    dynamic_fetaures = np.load('pick_5_visit_features_merge.npy')[0:2100,:,:]
     dynamic_fetaures.astype(np.int32)
-    labels = np.load('allPatientLabels.npy')[0:2100, :, -1].reshape([-1, 42, 1])[:,0:5,:].reshape([-1,1])
-    data = np.hstack((dynamic_fetaures,labels))
+    labels = np.load('pick_5_visit_labels_merge.npy')
+    data = np.concatenate((dynamic_fetaures,labels),axis=2).reshape(-1,96)
     data_set = pd.DataFrame(data)
     col_list = list(data_set.columns.values)
     new_col = [str(x) for x in col_list]
     data_set.columns = new_col
     np.savetxt('allPatient_now.csv', data_set, delimiter=',')
     print(list(data_set.columns.values))
-    cph = CoxPHFitter()
-    cph.fit(data_set,duration_col='10',event_col='98',show_progress=True)
+    cph = CoxPHFitter(penalizer=8)
+    cph.fit(data_set,duration_col='0',event_col='95',show_progress=True)
     cph.print_summary()
     # cph.plot(columns=['15','20','21','25'])
     # plt.savefig('cox model' + '.png', format='png')
 
-    scores = k_fold_cross_validation(cph, data_set, '10', event_col='98', k=5)
+    scores = k_fold_cross_validation(cph, data_set, '0', event_col='95', k=5)
     print(scores)
     print(np.mean(scores))
     print(np.std(scores))
+
 
 def get_average_weight():
     weight1 = np.load("allAttentionWeight_1.npy")
@@ -515,11 +624,49 @@ def get_average_weight():
     np.save("average_weight.npy", ave_weight)
     return ave_weight
 
+
+def tuning_paramters():
+    data = get_pick_data("lstm")
+    train_dynamic_features, test_dynamic_features, train_labels, test_labels = split_data_set(data.dynamic_features,
+                                                                                              data.labels)
+    time_step = 5
+    num_features = 94
+    lstm_size = np.random.randint(16,512)
+    n_output = 1
+    batch_size = np.random.randint(8,256)
+    epochs = np.random.randint(5,100)
+    learning_rate = np.random.uniform(0.00001,10)
+    max_loss = 0.5
+    max_pace = 0.01
+    ridge = np.random.uniform(0.00001,0.01)
+    dropout = np.random.uniform(0,1)
+    optimizer = tf.train.AdamOptimizer
+    name = "AttentionLSTM"
+    param_dist = {"time_step":time_step,"num__features":num_features,"lstm_size":lstm_size,"batch_size":batch_size,
+                  "n_output":n_output,"epochs":epochs,"learning_rate":learning_rate,"max_loss":max_loss,
+                  "max_pace":max_pace,"ridge":ridge,"dropout":dropout,"optimizer":optimizer,"name":name}
+    global_attebtion_lstm = AttentionLSTMModel(time_steps=data.dynamic_features.shape[1],
+                                               num_features=data.dynamic_features.shape[2],lstm_size=128,n_output=1)
+    rand = RandomizedSearchCV(global_attebtion_lstm,param_distributions=param_dist,cv=5,scoring="accuracy",n_iter=10,random_state=5)
+    for i in range(5):
+        rand.fit(train_dynamic_features[i],train_labels[i])
+        result = pd.DataFrame.from_dict(rand.cv_results_)
+        best_param = rand.best_params_
+        best_score = rand.best_score_
+        y_pred = rand.predict(test_dynamic_features[i],test_labels[i])
+        print(sklearn.metrics.classification_report(y_true=test_labels,y_pred=y_pred))
+
+
+
 if __name__ == "__main__":
-    # for i in range(5):
-        # cox_regression_experiment()
-        # LogisticRegressionExperiment().do_experiments()
-        # BidirectionalLSTMExperiments().do_experiments()
-    AttentionBiLSTMExperiments().get_stages()
-        # SelfAttentionBiLSTMExperiments().do_experiments()
+    # get_average_weight()
+    # tuning_paramters()
+    # cox_regression_experiment()
+    for i in range(5):
+    # # cox_regression_experiment()
+    #     LogisticRegressionExperiment().do_experiments()
+    #     BidirectionalLSTMExperiments().do_experiments()
+        AttentionBiLSTMExperiments().do_experiments()
+    # AttentionBiLSTMExperiments().get_stages()
+    #     SelfAttentionBiLSTMExperiments().do_experiments()
         # AttentionBiLSTMExperiments().get_stages()

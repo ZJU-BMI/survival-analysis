@@ -75,6 +75,64 @@ def read_data(name):
     return DataSet(dynamic_features,labels)
 
 
+# 从全部病人入院记录中平均选择5次记录（特征和标签都是加上最后一次）
+def pick_5_visit():
+    dynamic_fetaures = np.load("allPatientFeatures_merge.npy")[0:2100,:,0:]
+    labels = np.load("allPatientLabels_merge.npy")[0:2100, :, -1].reshape(-1,dynamic_fetaures.shape[1],1)
+    mask = np.sign(np.max(np.abs(dynamic_fetaures), 2))
+    length = np.sum(mask, 1)
+    new_features = np.zeros(shape=(0, 5, dynamic_fetaures.shape[2]))
+    new_labels = np.zeros(shape=(0, 5, labels.shape[2]))
+    for patient in range(dynamic_fetaures.shape[0]):
+        if length[patient]<6:
+            one_patient_feature = dynamic_fetaures[patient,0:5,:]
+            one_patient_label = labels[patient,0:5,:]
+        else:
+            t0 = 0
+            t4 = length[patient] - 1
+            t2 = int(length[patient] / 2)
+            t1 = int((t0 + t2) / 2)
+            t3 = int((t2 + t4) / 2)
+            t = [t0, t1, t2, t3, t4]
+            one_patient_feature = np.zeros(shape=(0, dynamic_fetaures.shape[2]))
+            one_patient_label = np.zeros(shape=(0, labels.shape[2]))
+            for T in range(5):
+                one_visit_feature = dynamic_fetaures[patient, t[T], :].reshape(-1,dynamic_fetaures.shape[2])
+                one_patient_feature = np.concatenate((one_patient_feature, one_visit_feature))
+                one_visit_label = labels[patient, t[T], :].reshape(-1,labels.shape[2])
+                one_patient_label = np.concatenate((one_patient_label, one_visit_label))
+            print(one_patient_label)
+            print(one_patient_feature)
+        one_patient_fetaure = one_patient_feature.reshape(-1, 5, dynamic_fetaures.shape[2])
+        new_features = np.concatenate((new_features, one_patient_fetaure))
+        one_patient_label = one_patient_label.reshape([-1, 5, labels.shape[2]])
+        new_labels = np.concatenate((new_labels, one_patient_label))
+    np.save("pick_5_visit_features_merge.npy", new_features)
+    np.save("pick_5_visit_labels_merge.npy", new_labels)
+
+
+# 将特征去除心功能 和 时间差
+def get_195_features():
+    features = np.load("pick_5_visit_features.npy")
+    time = features[:, :, 10]
+    features1 = features[:, :, 0:3]
+    features2 = features[:, :, 7:10]
+    features3 = features[:, :, 11:]
+    features_concentrate = np.concatenate((features1, np.concatenate((features2, features3), axis=2)), axis=2)
+    print(features_concentrate.shape)
+    np.save("pick_5_visit_features_195.npy", features_concentrate)
+
+
+def get_pick_data(name):
+    if name == 'LogisticRegression':
+        dynamic_fetaures = np.load("pick_5_visit_features_merge.npy")[0:2100,:,1:].reshape(-1,94)
+        labels = np.load("pick_5_visit_labels_merge.npy")[0:2100,:,-1].reshape(-1,1)
+    else:
+        dynamic_fetaures = np.load("pick_5_visit_features_merge.npy")[0:2100,:,1:]
+        labels = np.load("pick_5_visit_labels_merge.npy")[0:2100,:,:]
+        # length = np.reshape(mask,[-1,dynamic_fetaures.shape[1]])
+    return DataSet(dynamic_fetaures,labels)
 
 if __name__ == '__main__':
-    read_data('rnn')
+    pick_5_visit()
+    # get_195_features()
