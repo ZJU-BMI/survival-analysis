@@ -78,15 +78,17 @@ def read_data(name):
 # 从全部病人入院记录中平均选择5次记录（特征和标签都是加上最后一次）
 def pick_5_visit():
     dynamic_fetaures = np.load("allPatientFeatures_merge.npy")[0:2100,:,0:]
-    labels = np.load("allPatientLabels_merge.npy")[0:2100, :, -1].reshape(-1,dynamic_fetaures.shape[1],1)
+    labels = np.load("allPatientLabels_merge_1.npy")[0:2100, :, :]
     mask = np.sign(np.max(np.abs(dynamic_fetaures), 2))
     length = np.sum(mask, 1)
     new_features = np.zeros(shape=(0, 5, dynamic_fetaures.shape[2]))
     new_labels = np.zeros(shape=(0, 5, labels.shape[2]))
+    new_stages = np.zeros(shape=(0,5,4))
     for patient in range(dynamic_fetaures.shape[0]):
         if length[patient]<6:
             one_patient_feature = dynamic_fetaures[patient,0:5,:]
             one_patient_label = labels[patient,0:5,:]
+
         else:
             t0 = 0
             t4 = length[patient] - 1
@@ -107,8 +109,8 @@ def pick_5_visit():
         new_features = np.concatenate((new_features, one_patient_fetaure))
         one_patient_label = one_patient_label.reshape([-1, 5, labels.shape[2]])
         new_labels = np.concatenate((new_labels, one_patient_label))
-    np.save("pick_5_visit_features_merge.npy", new_features)
-    np.save("pick_5_visit_labels_merge.npy", new_labels)
+    np.save("pick_5_visit_features_merge_1.npy", new_features)
+    np.save("pick_5_visit_labels_merge_1.npy", new_labels)
 
 
 # 将特征去除心功能 和 时间差
@@ -125,14 +127,30 @@ def get_195_features():
 
 def get_pick_data(name):
     if name == 'LogisticRegression':
-        dynamic_fetaures = np.load("pick_5_visit_features_merge.npy")[0:2100,:,1:].reshape(-1,94)
-        labels = np.load("pick_5_visit_labels_merge.npy")[0:2100,:,-1].reshape(-1,1)
+        dynamic_features = np.load("pick_5_visit_features_merge_1.npy")[0:2100,:,1:93].reshape(-1,92)
+        # 2年
+        # labels = np.load("pick_5_visit_labels_merge_1.npy")[0:2100,:,-1].reshape(-1,1)
+        # 1年
+        # labels = np.load("pick_5_visit_labels_merge_1.npy")[0:2100, :, -3].reshape(-1, 1)
+        # 6个月
+        # labels = np.load("pick_5_visit_labels_merge_1.npy")[0:2100, :, -3].reshape(-1, 1)
+        # 3个月
+        labels = np.load("pick_5_visit_labels_merge_1.npy")[0:2100, :, -4].reshape(-1, 1)
     else:
-        dynamic_fetaures = np.load("pick_5_visit_features_merge.npy")[0:2100,:,1:]
-        labels = np.load("pick_5_visit_labels_merge.npy")[0:2100,:,:]
+        # 2年
+        dynamic_features = np.load("pick_5_visit_features_merge_1.npy")[0:2100,:,0:93]
+        # labels = np.load("pick_5_visit_labels_merge_1.npy")[0:2100,:,-1].reshape(-1,dynamic_fetaures.shape[1],1)
+        # 1年
+        # labels = np.load("pick_5_visit_labels_merge_1.npy")[0:2100, :, -3].reshape(-1, dynamic_features.shape[1], 1)
+        # 6个月
+        # labels = np.load("pick_5_visit_labels_merge.npy")[0:2100, :, -3]
+        # 3个月
+        labels = np.load("pick_5_visit_labels_merge_1.npy")[0:2100, :, -2].reshape(-1,dynamic_features.shape[1],1)
         # length = np.reshape(mask,[-1,dynamic_fetaures.shape[1]])
-    return DataSet(dynamic_fetaures,labels)
+        print(len(np.where(labels.reshape(-1,1) == 1)[0]))
+
+    return DataSet(dynamic_features,labels)
+
 
 if __name__ == '__main__':
     pick_5_visit()
-    # get_195_features()
