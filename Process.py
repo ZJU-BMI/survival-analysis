@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import csv
 from lifelines.statistics import logrank_test
-
+from scipy import stats
 
 # 得到数据的feature 并将每个病人数据padding 成 42 次入院记录（2）
 def get_all_patients_features():
@@ -29,7 +29,8 @@ def get_all_patients_features():
             print(line)
             patientId = line[0]
             visitId = line[1]
-            feature = list(map(int,line[2:]))
+            # feature = list(map(int,line[:]))
+            feature = line[:]
             featureArray = np.array(feature)
             print(featureArray.shape)
             if patientId != patient_id_list[i]:
@@ -50,7 +51,7 @@ def get_all_patients_features():
         all_patient_features.append(one_patient_features)   # get all patients features
         temp.append(one_patient_features_arrays)
         all_patient_features_arrays = np.array(temp)
-        np.save("allPatientFeatures_merge.npy",all_patient_features_arrays)
+        np.save("allPatientFeatures_include_id.npy",all_patient_features_arrays)
         # allPatientFeaturesArrays = np.dstack((allPatientFeaturesArrays,onePatientFeaturesArrays))
 
         print(len(all_patient_features))
@@ -377,10 +378,158 @@ def get_logistic_log_rank():
     print(results.test_statistic)
 
 
+# 求出有特征的病人的平均值排序
+def get_average_weights():
+    weights = np.load("average_weight.npy")
+    weight_reshape = weights.reshape(-1,92)  # 得到所有病人的weight
+    features = np.load("pick_5_visit_features_merge_1.npy")[0:2100,:,1:93]
+    feature_reshape = features.reshape(-1,92)  # 得到所有病人的feature
+    # 找到有用的weight
+    weight_useful = weight_reshape * feature_reshape
+
+    # 计算每个feature的权重和
+    weight_useful_sum = np.sum(weight_useful, axis=0)
+
+    # 计算有用的patient数目
+    patient_useful = np.sum(feature_reshape, axis=0)
+
+    # 计算最后的结果
+    feature_selection = weight_useful_sum * np.reciprocal(patient_useful)
+    np.save("patient_weight.npy", feature_selection)
+    np.savetxt("patient_weight.csv",feature_selection, delimiter=',')
+
+
+def do_calibration():
+    group = [0,1]
+    df = pd.read_excel("C:\\Users\\szh\\Desktop\\2.xlsx")
+    df['rank'] = df['probability'].rank(method='first')
+    df['decile'] = pd.qcut(df['rank'].values, 10).codes
+    print(df['decile'])
+    obsevents_pos = df['label'].groupby(df['decile']).sum()
+    print("obsevents_pos",obsevents_pos)
+    obsevents_neg = df['label'].groupby(df['decile']).count()-obsevents_pos
+    print("obseevent_neg",obsevents_neg)
+    expevents_pos = df['probability'].groupby(df['decile']).sum()
+    print("expevents",expevents_pos)
+    expevents_neg = df['probability'].groupby(df['decile']).count() - expevents_pos
+    print("expevents_neg",expevents_neg)
+    h1 = (((obsevents_pos - expevents_pos) ** 2 / expevents_pos) + (
+                (obsevents_neg - expevents_neg) ** 2 / expevents_neg)).sum()
+    print(h1)
+    p_value = 1.0-stats.chi2.cdf(h1,9)
+    print(p_value)
+
+
+def embedding_features():
+    two_year_features = np.load("pick_5_features_half_year.npy")
+    all_patient_features = np.zeros(shape=(0,5,93,2))
+    for patient in range(two_year_features.shape[0]):
+        one_patient_feature = np.zeros(shape=(0,93,2))
+        for visit in range(two_year_features.shape[1]):
+            feature = two_year_features[patient,visit,1:]
+            if np.sum(feature)==0:
+                one_visit_feature = np.zeros(shape=(len(feature),2))
+            else:
+                one_visit_feature =[]
+                for m in range(len(feature)):
+                    new_feature = np.zeros(shape=(0,2))
+                    if feature[m]==1:
+                        new_feature= np.concatenate((new_feature,np.array([1,0]).reshape(-1,2)))
+                    else:
+                        new_feature = np.concatenate((new_feature,np.array([0,1]).reshape(-1,2)))
+                    new_feature = np.array(new_feature)
+                    new_feature = new_feature.reshape(-1,2)
+                    one_visit_feature.append(new_feature)
+            one_visit_feature = np.array(one_visit_feature)
+            one_visit_feature = one_visit_feature.reshape(-1,len(feature),2)
+            print("one_patient_nums",one_patient_feature.shape[0])
+            one_patient_feature = np.concatenate((one_patient_feature,one_visit_feature))
+        one_patient_feature = one_patient_feature.reshape(-1,5,93,2)
+        all_patient_features = np.concatenate((all_patient_features,one_patient_feature))
+        print("all_patient_nums",all_patient_features.shape[0])
+    np.save("embedding_features_half_year_2dims.npy",all_patient_features)
+    return all_patient_features
+
+
+def calculate_hazard_ratio():
+    features = np.load("pick_logistic_features_two_year.npy")[:,1:]
+    label = np.load("pick_logistic_labels_two_year.npy")
+    HR = list()
+    treatment_observeds = list()
+    treatment_expecteds = list()
+    control_observeds = list()
+    control_expecteds = list()
+    for i in range(features.shape[1]):
+        treatment_observed = 0
+        treatment_expected = 0
+        control_observed = 0
+        control_expected = 0
+        feature = features[:,i]
+        for j in range(features.shape[0]):
+            feature_m = int(feature[j])
+            label_m = int(label[j])
+            if feature_m ==1 and label_m == 1:
+                treatment_observed += 1
+            if feature_m ==1 and label_m == 0:
+                treatment_expected += 1
+            if feature_m ==0 and label_m == 1:
+                control_observed += 1
+            if feature_m ==0 and label_m == 0:
+                control_expected += 1
+        treatment_observeds.append(treatment_observed)
+        treatment_expecteds.append(treatment_expected)
+        control_observeds.append(control_observed)
+        control_expecteds.append(control_expected)
+        m = treatment_observed/(treatment_expected+treatment_observed)*(control_expected+control_observed)/control_observed
+        print(m)
+        HR.append(m)
+    treatment_observeds_ = np.array(treatment_observeds).reshape(-1,1)
+    treatment_expecteds_ = np.array(treatment_expecteds).reshape(-1,1)
+    control_observeds_ = np.array(control_observeds).reshape(-1,1)
+    control_expecteds_ = np.array(control_expecteds).reshape(-1,1)
+    result_1 = np.concatenate((treatment_observeds_,treatment_expecteds_),axis=1)
+    result_2 = np.concatenate((control_observeds_,control_expecteds_),axis=1)
+    result = np.concatenate((result_1,result_2),axis=1)
+    np.savetxt("result_two_year.csv",result,delimiter=',')
+    np.savetxt("hr_two_year.csv",HR)
+
+
+def get_part_matrix():
+    adjency = np.loadtxt("adjacency_ave_.csv",delimiter=",")
+    result = list()
+    m = [39,42,86,7,90,84,8,19,51,60]
+    for i in range(10):
+        for j in range(10):
+            x = m[i]
+            y = m[j]
+            result.append(adjency[x,y])
+    result = np.array(result).reshape(-1,10)
+    np.savetxt("part_adjacency_half_year.csv",result,delimiter=',')
+    fina = list()
+    for i in range(10):
+        element = result[i,i]
+        if i==0:
+            result_ = result[i,i+1:]
+        else:
+            result_ = np.concatenate((result[i,0:i],result[i,i+1:]))
+        result_ = np.exp(result_)/np.sum(np.exp(result_))
+        soft_result = np.insert(result_,i,element)
+        fina.append(soft_result)
+    fina = np.array(fina).reshape(-1,10)
+    print(fina)
+    np.savetxt("soft_adjacency_half_year.csv",fina,delimiter=',')
 if __name__ == '__main__':
-    get_logistic_log_rank()
-    # get_all_patients_features()
+    get_part_matrix()
+    calculate_hazard_ratio()
     get_feature_selection()
+    embedding_features()
+    do_calibration()
+    get_insert_sql()
+    # get_all_patients_features()
+    # get_average_weights()
+    # get_logistic_log_rank()
+    # get_all_patients_features()
+    # get_feature_selection()
     # read_features()
     # read_labels()
     # read_features1()

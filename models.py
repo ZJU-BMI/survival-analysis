@@ -1,8 +1,9 @@
 import tensorflow as tf
 from sklearn.metrics import roc_auc_score, accuracy_score
-import time
+import pandas as pd
 from sklearn.base import BaseEstimator
-
+import time
+import datetime
 
 # 单向LSTM
 class BasicLSTMModel(BaseEstimator):
@@ -38,8 +39,15 @@ class BasicLSTMModel(BaseEstimator):
                               [tf.shape(self._x)[0], 1, 1])
             bias = tf.Variable(tf.random_normal([n_output]), name='output_bias')
             self._output = tf.matmul(self._hidden, self._v) + bias
-            self._pred = tf.nn.tanh(self._output)
-            self._loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self._y, logits=self._pred), name='loss')
+            mask, _ = self._length()
+            mask = tf.reshape(mask, [-1, self._time_steps, 1])
+            self._pred = tf.nn.sigmoid(self._output)
+            self._pred = tf.multiply(self._pred,mask)
+            self._loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self._y, logits=self._pred),
+                                        name='loss')
+
+            # self._loss_1 = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self._y, logits=self._pred))
+            # loss = self.log_likelihood()
             # self._loss = tf.add(self._loss_1, loss, name='loss')
             # regularization
             if ridge != 0:
@@ -76,7 +84,7 @@ class BasicLSTMModel(BaseEstimator):
         loss = 0
         count = 0
         while data_set.epoch_completed < self._epochs:
-            dynamic_features, labels = data_set.next_batch(self._batch_size)
+            dynamic_features, time,labels = data_set.next_batch(self._batch_size)
             self._sess.run(self._train_op, feed_dict={self._x: dynamic_features,
                                                       self._y: labels})
             if data_set.epoch_completed % self._output_n_epoch == 0 and data_set.epoch_completed not in logged:
@@ -90,15 +98,14 @@ class BasicLSTMModel(BaseEstimator):
                 test_labels = test_set.labels
                 test_labels = test_labels.reshape([-1, 1])
                 auc = roc_auc_score(test_labels, y_score)
-                y_score_pred = [0 for j in range(len(y_score))]
-                for i in range(len(y_score)):
-                    if y_score[i] >= 0.5:
-                        y_score_pred[i] = 1
-                    else:
-                        y_score_pred[i] = 0
-                acc = accuracy_score(test_labels, y_score_pred)
-                print("{}\t{}\t{}\t{}\t{}\t{}".format(acc, auc, data_set.epoch_completed, loss, loss_diff, count),
-                      time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+                # y_score_pred = [0 for j in range(len(y_score))]
+                # for i in range(len(y_score)):
+                #     if y_score[i] >= 0.5:
+                #         y_score_pred[i] = 1
+                #     else:
+                #         y_score_pred[i] = 0
+                # acc = accuracy_score(test_labels, y_score_pred) # 自己设定的点 不能当作是acc
+                print("{}\t{}\t{}\t{}".format(auc, data_set.epoch_completed, loss, loss_diff, count))
 
                 # 设置训练停止条件
                 if loss > self._max_loss:
@@ -112,12 +119,15 @@ class BasicLSTMModel(BaseEstimator):
                     break
 
     def predict(self, test_set):
-        loss = self._sess.run(self._loss, feed_dict={self._x: test_set.dynamic_features[:,:,1:93],
-                                                     self._y: test_set.labels,
-                                                     self._t: test_set.dynamic_features[:,:,0].reshape(-1,5,1)})
-        print("test_loss-----" + str(loss))
-        return self._sess.run(self._pred, feed_dict={self._x: test_set.dynamic_features[:,:,1:93],
-                                                     self._t: test_set.dynamic_features[:,:,0].reshape(-1,5,1)})
+        # loss = self._sess.run(self._loss, feed_dict={self._x: test_set.dynamic_features[:,:,1:],
+        #                                              self._y: test_set.labels})
+        #                                              # self._t: test_set.dynamic_features[:,:,0].reshape(-1,1,1)})
+        # print("test_loss-----" + str(loss))
+        return self._sess.run(self._pred, feed_dict={self._x: test_set.dynamic_features})
+                                                     # self._t:
+                                                     #     test_set.dynamic_features[:,:,0].reshape(-1,self._time_steps,1)})
+
+
 
     @property
     def name(self):
@@ -195,12 +205,14 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
             self._output = tf.matmul(self._hidden, self._v) + bias
             mask, _ = self._length()
             mask = tf.reshape(mask, [-1, self._time_steps, 1])
-            # 将激活函修改成tanh
-            self._prediction = tf.nn.tanh(self._output)
+            # 将激活函修改成tanh-->softsign(更快且不容易饱和)
+            self._prediction = tf.nn.sigmoid(self._output)
             self._pred = tf.multiply(self._prediction, mask)
 
+            # self._loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self._y,logits=self._pred),
+            #                             name='loss')
             self._loss_1 = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self._y,
-                                                                                  logits=self._pred)) * 0.5
+                                                                                  logits=self._pred))
             neg_likelihood = self.log_likelihood()
 
             self._loss = tf.add(self._loss_1,neg_likelihood, name='loss')
@@ -223,6 +235,7 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
         self._w_z = tf.nn.softmax(w_a, 2)
         # get the attention output
         self._z = tf.multiply(self._x, self._w_z)
+        self._z = tf.add(self._x, self._z)
 
     def _hidden_layer(self):
         self._lstm = {}
@@ -242,6 +255,23 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
                                                           initial_state_bw=self._init_state['backward'])
         self._hidden = tf.concat(self._hidden, axis=2)
 
+    def log_likelihood(self):  # 实现加入时间的loss
+        risk = tf.reshape(self._pred, [-1])
+        time = tf.reshape(self._t,[-1])
+        E = tf.reshape(self._y, [-1])
+        sort_idx = tf.argsort(time, direction='DESCENDING')
+        E = tf.gather(E, sort_idx)
+        risk = tf.gather(risk, sort_idx)
+        hazard_ratio = tf.exp(risk)
+        log_risk = tf.log(tf.cumsum(hazard_ratio))
+        uncensored_likelihood = risk - log_risk
+        censored_likelihood = tf.multiply(uncensored_likelihood, E)
+        # num_observed_events = tf.reduce_sum(E)
+        # neg_likelihood = -tf.reduce_sum(censored_likelihood) * 0.0000001
+        neg_likelihood = -tf.reduce_sum(censored_likelihood) * 0.00001
+        print(neg_likelihood)
+        return neg_likelihood
+
     def fit(self, data_set, test_set):
         self._sess.run(tf.global_variables_initializer())
         data_set.epoch_completed = 0
@@ -254,34 +284,35 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
         loss = 0
         count = 0
         while data_set.epoch_completed < self._epochs:
-            dynamic_features, labels = data_set.next_batch(self._batch_size)
+            dynamic_features, time, labels = data_set.next_batch(self._batch_size)
             self._sess.run(self._train_op,
-                           feed_dict={self._x: dynamic_features[:, :, 1:93],
+                           feed_dict={self._x: dynamic_features,
                                       self._y: labels,
-                                      self._t: dynamic_features[:, :, 0].reshape(-1, dynamic_features.shape[1], 1)})
+                                      self._t: time.reshape(-1, dynamic_features.shape[1], 1)})
+            # self._sess.run(self._train_op,
+            #                feed_dict={self._x: dynamic_features[:, :, 1:],
+            #                           self._y: labels})
+
             if data_set.epoch_completed % self._output_n_epoch == 0 and data_set.epoch_completed not in logged:
                 logged.add(data_set.epoch_completed)
                 loss_prev = loss
                 loss = self._sess.run(self._loss,
-                                      feed_dict={self._x: data_set.dynamic_features[:,:,1:93].reshape(-1,5,92),
+                                      feed_dict={self._x: data_set.dynamic_features,
                                                  self._y: data_set.labels,
-                                                 self._t: data_set.dynamic_features[:,:,0].reshape(-1,5,1)})
+                                                 self._t:
+                                                     data_set.time.reshape(-1,dynamic_features.shape[1],1)})
+
+                # loss = self._sess.run(self._loss,
+                #                       feed_dict={self._x: data_set.dynamic_features[:, :,1:].reshape(-1, self._time_steps,self._num_features),
+                #                                  self._y: data_set.labels})
                 loss_diff = loss_prev - loss
                 y_score = self.predict(test_set)
-                y_score = y_score.reshape([-1, 1])
+                y_score = y_score.reshape([-1, ])
                 test_labels = test_set.labels
-                test_labels = test_labels.reshape([-1, 1])
+                test_labels = test_labels.reshape([-1, ])
                 auc = roc_auc_score(test_labels, y_score)
-                y_score_pred = [0 for j in range(len(y_score))]
-                for i in range(len(y_score)):
-                    if y_score[i] >= 0.5:
-                        y_score_pred[i] = 1
-                    else:
-                        y_score_pred[i] = 0
-                acc = accuracy_score(test_labels, y_score_pred)
-                print("{}\t{}\t{}\t{}\t{}\t{}".format(acc, auc, data_set.epoch_completed, loss, loss_diff, count),
-                      time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
 
+                print("{}\t{}\t{}\t{}\t{}\t{}".format(data_set.epoch_completed, auc, loss, loss_diff, count,datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
                 # 设置训练停止条件
                 if loss > self._max_loss:
                     count = 0
@@ -292,32 +323,45 @@ class AttentionLSTMModel(BidirectionalLSTMModel):
                         count += 1
                 if count > 9:
                     break
-        save_path = self._save.save(self._sess, self._name + "model/save_net" +
-                                    time.strftime("%m-%d-%H-%M-%S", time.localtime()) + ".ckpt")
+        # save_path = self._save.save(self._sess, self._name + "model/save_net" +time.strftime("%m-%d-%H-%M-%S", time.localtime()) + ".ckpt")
+        # t = time.localtime()
+        t = datetime.datetime.now().strftime("%m-%d-%H-%M-%S")
+        save_path = self._save.save(self._sess, self._name + "model/save_net" +t) + ".ckpt"
         print("Save to path: ", save_path)
+
+    def predict(self, test_set):
+        loss = self._sess.run(self._pred,feed_dict={self._x:test_set.dynamic_features,
+                                                    self._t:test_set.time})
+
+        # loss = self._sess.run(self._pred,feed_dict={self._x:test_set.dynamic_features[:,:,1:]})
+        return loss
 
     def attention_analysis(self, test_dynamic, model):
         #   输入test_set, 读取模型并返回attention的weight
         saver = tf.train.Saver()
         saver.restore(self._sess, self._name + "model/" + model)
-        prob = self._sess.run(self._pred, feed_dict={self._x: test_dynamic[:, :, :]})
-        attention_signals = self._sess.run(self._w_z, feed_dict={self._x: test_dynamic[:, :, :]})
+        prob = self._sess.run(self._pred, feed_dict={self._x: test_dynamic[:, :, 1:],
+                                                     self._t: test_dynamic[:,:,0].reshape(-1,5,1)})
+        # prob = self._sess.run(self._pred, feed_dict={self._x: test_dynamic[:, :, 1:]})
+        # attention_signals = self._sess.run(self._w_z, feed_dict={self._x: test_dynamic[:, :,1:]})
+        attention_signals = self._sess.run(self._w_z, feed_dict={self._x: test_dynamic[:, :, 1:93],
+                                                                 self._t: test_dynamic[:,:,0].reshape(-1,5,1)})
         return prob, attention_signals.reshape([-1, self._time_steps, self._num_features])
 
     # add the neg-partial-likelihood loss function
-    def log_likelihood(self):
-        risk = tf.reshape(self._pred, [-1])
-        E = tf.reshape(self._y,[-1])
-        sort_idx = tf.argsort(E,direction='DESCENDING')
-        E = tf.gather(E,sort_idx)
-        risk = tf.gather(risk,sort_idx)
-        hazard_ratio = tf.exp(risk)
-        log_risk = tf.log(tf.cumsum(hazard_ratio))
-        uncensored_likelihood = risk - log_risk
-        censored_likelihood = tf.multiply(uncensored_likelihood, E)
-        # num_observed_events = tf.reduce_sum(E)
-        neg_likelihood = -tf.reduce_sum(censored_likelihood) * 0.000005
-        return neg_likelihood
+    # def log_likelihood(self):
+    #     risk = tf.reshape(self._pred, [-1])
+    #     E = tf.reshape(self._y,[-1])
+    #     sort_idx = tf.argsort(E,direction='DESCENDING')
+    #     E = tf.gather(E,sort_idx)
+    #     risk = tf.gather(risk,sort_idx)
+    #     hazard_ratio = tf.exp(risk)
+    #     log_risk = tf.log(tf.cumsum(hazard_ratio))
+    #     uncensored_likelihood = risk - log_risk
+    #     censored_likelihood = tf.multiply(uncensored_likelihood, E)
+    #     # num_observed_events = tf.reduce_sum(E)
+    #     neg_likelihood = -tf.reduce_sum(censored_likelihood) * 0.000001
+    #     return neg_likelihood
 
 
 class LogisticRegression(object):
@@ -442,7 +486,7 @@ class SelfAttentionLSTMModel(BidirectionalLSTMModel):
                               [tf.shape(self._x)[0], 1, 1])
             bias = tf.Variable(tf.random_normal([n_output]))
             self._output = tf.matmul(self._hidden, self._v) + bias
-            self._pred = tf.nn.tanh(self._output)
+            self._pred = tf.nn.sigmoid(self._output)
             self._loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self._y, logits=self._pred),
                                         name="loss")
 
@@ -457,7 +501,7 @@ class SelfAttentionLSTMModel(BidirectionalLSTMModel):
         """
             self attention : return self._z
         """
-        dims = 3
+        dims = 64
         self._q = tf.Variable(tf.truncated_normal([self._num_features, dims], stddev=0.1), name='self_attention_w')
         self._k = tf.Variable(tf.truncated_normal([self._num_features, dims], stddev=0.1), name='self_attention_k')
         self._v = tf.Variable(tf.truncated_normal([self._num_features, dims], stddev=0.1), name='self_attention_v')
@@ -465,12 +509,16 @@ class SelfAttentionLSTMModel(BidirectionalLSTMModel):
         q_trans = tf.tile(tf.reshape(self._q, [-1, self._num_features, dims]), [tf.shape(self._x)[0], 1, 1])
         k_trans = tf.tile(tf.reshape(self._k, [-1, self._num_features, dims]), [tf.shape(self._x)[0], 1, 1])
         v_trans = tf.tile(tf.reshape(self._v, [-1, self._num_features, dims]), [tf.shape(self._x)[0], 1, 1])
+        # q_trans = tf.Variable(tf.truncated_normal([tf.shape(self._x)[0],self._num_features,dims]))
+        # k_trans = tf.Variable(tf.truncated_normal([tf.shape(self._x)[0],self._num_features,dims]))
+        # v_trans = tf.Variable(tf.truncated_normal([tf.shape(self._x)[0],self._num_features,dims]))
         w0 = tf.tile(tf.reshape(self._w0, [-1, dims, self._num_features]), [tf.shape(self._x)[0], 1, 1])
         q = tf.matmul(self._x, q_trans)
         k = tf.matmul(self._x, k_trans)
         v = tf.matmul(self._x, v_trans)
-        self._m = tf.nn.softmax(tf.matmul(tf.matmul(q, tf.transpose(k, [0, 2, 1])), v), 2)
+        self._m = tf.nn.softmax(tf.matmul(tf.matmul(q, tf.transpose(k, [0, 2, 1]))/8, v), 2)
         self._z = tf.matmul(self._m, w0)
+        self._z = tf.add(self._z,self._x)
 
     def _hidden_layer(self):
         self._lstm = {}
@@ -503,7 +551,7 @@ class SelfAttentionLSTMModel(BidirectionalLSTMModel):
         loss = 0
         count = 0
         while data_set.epoch_completed < self._epochs:
-            dynamic_features, labels = data_set.next_batch(self._batch_size)
+            dynamic_features, time,labels = data_set.next_batch(self._batch_size)
             self._sess.run(self._train_op, feed_dict={self._x: dynamic_features,
                                                       self._y: labels})
             if data_set.epoch_completed % self._output_n_epoch == 0 and data_set.epoch_completed not in logged:
@@ -524,8 +572,7 @@ class SelfAttentionLSTMModel(BidirectionalLSTMModel):
                     else:
                         y_score_pred[i] = 0
                 acc = accuracy_score(test_labels, y_score_pred)
-                print("{}\t{}\t{}\t{}\t{}\t{}".format(acc, auc, data_set.epoch_completed, loss, loss_diff, count),
-                      time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+                print("{}\t{}\t{}\t{}\t{}\t{}".format(acc, auc, data_set.epoch_completed, loss, loss_diff, count))
 
                 # 设置训练停止条件
                 if loss > self._max_loss:
@@ -537,7 +584,9 @@ class SelfAttentionLSTMModel(BidirectionalLSTMModel):
                         count += 1
                 if count > 9:
                     break
-        save_path = self._save.save(self._sess, self._name + "model/save_net" +
-                                    time.strftime("%m-%d-%H-%M-%S", time.localtime())
-                                    + ".ckpt")
+        # save_path = self._save.save(self._sess, self._name + "model/save_net" +
+        #                             time.strftime("%m-%d-%H-%M-%S", time.localtime())
+        #                             + ".ckpt")
+        t = datetime.datetime.now().strftime("%m-%d-%H-%M-%S")
+        save_path = self._save.save(self._sess, self._name + "model/save_net" + t) + ".ckpt"
         print("Save to path: ", save_path)
